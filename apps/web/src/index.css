@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  body {
+    @apply bg-ink-50 font-sans text-ink-900;
+  }
+  /* Keyboard focus stays visible; pointer focus does not add noise. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-ink-900/30 ring-offset-1;
+  }
+}

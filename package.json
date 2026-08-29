@@ -1,0 +1,43 @@
+{
+  "name": "t3n-access-compliance-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Privacy-preserving enterprise access & compliance agent built on the Terminal 3 (T3N) ADK",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,web -c cyan,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "npm run dev --workspace @t3n-aca/server",
+    "dev:web": "npm run dev --workspace @t3n-aca/web",
+    "build": "npm run build --workspace @t3n-aca/web",
+    "start": "npm run start --workspace @t3n-aca/server",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "t3n:connect": "tsx scripts/t3n-connect.ts",
+    "verify": "npm run typecheck && npm run lint && npm run test",
+    "t3n:setup": "tsx scripts/t3n-setup.ts",
+    "t3n:seed": "tsx scripts/t3n-seed.ts"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@terminal3/t3n-sdk": "5.2.0",
+    "@types/node": "^22.10.2",
+    "concurrently": "^9.1.0",
+    "dotenv": "^16.4.7",
+    "eslint": "^9.17.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.1",
+    "vitest": "^2.1.8"
+  }
+}

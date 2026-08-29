@@ -1,0 +1,40 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": false,
+    "forceConsistentCasingInFileNames": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@t3n-aca/core": ["packages/core/src/index.ts"],
+      "@t3n-aca/core/*": ["packages/core/src/*"],
+      "@t3n-aca/policy-engine": ["packages/policy-engine/src/index.ts"],
+      "@t3n-aca/policy-engine/*": ["packages/policy-engine/src/*"],
+      "@t3n-aca/t3n": ["packages/t3n/src/index.ts"],
+      "@t3n-aca/t3n/*": ["packages/t3n/src/*"]
+    }
+  },
+  "include": [
+    "packages/*/src/**/*.ts",
+    "apps/server/src/**/*.ts",
+    "apps/web/src/**/*.ts",
+    "apps/web/src/**/*.tsx",
+    "scripts/**/*.ts",
+    "tests/**/*.ts"
+  ],
+  "exclude": ["node_modules", "dist", "**/dist"]
+}

@@ -1,0 +1,16 @@
+{
+  "name": "@t3n-aca/t3n",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@t3n-aca/core": "*",
+    "@terminal3/t3n-sdk": "5.2.0",
+    "zod": "^3.24.1"
+  }
+}

@@ -1,0 +1,189 @@
+# ===========================================================================
+# Enterprise access policies
+# ===========================================================================
+#
+# This file is the ONLY place business rules live. Changing who may access
+# what — thresholds, required evidence, manual-approval gates — is an edit
+# here, never a code change. The engine that reads it is deterministic and has
+# no knowledge of any specific policy.
+#
+# Validated on load against a strict schema (packages/policy-engine/src/schema.ts).
+# A malformed file fails fast at startup with a precise message rather than
+# silently degrading a decision.
+#
+# See docs/maintenance.md → "Adding a policy" for a worked example.
+
+version: "1.0.0"
+
+# ---------------------------------------------------------------------------
+# claims — the vocabulary of evidence
+# ---------------------------------------------------------------------------
+# Each claim maps to exactly one Terminal 3 data scope. This mapping is what
+# makes data minimization concrete: a policy names the claims it needs, and the
+# agent requests ONLY the scopes those claims live in. Nothing else is asked
+# for, so nothing else can be disclosed.
+#
+# Adding a claim here does not grant anything — a subject still has to consent
+# to the scope before the agent can read it.
+
+claims:
+  identity_verified:
+    scope: compliance/identity
+    label: Identity verified
+    description: >
+      A government-issued identity document was verified. The agent learns only
+      that verification succeeded and to what standard — never the document,
+      the number, the date of birth, or the nationality.
+
+  employment_verified:
+    scope: compliance/employment
+    label: Employment verified
+    description: >
+      An active employment relationship was confirmed. The agent learns only
+      that employment is active — never salary, job title, or manager.
+
+  contractor_verified:
+    scope: compliance/contractor
+    label: Contractor status verified
+    description: >
+      An active contractor engagement was confirmed, including that a signed
+      agreement is on file.
+
+  company_verified:
+    scope: compliance/company
+    label: Employer company verified
+    description: >
+      The contractor's employing company was verified as a legitimate
+      registered entity in good standing.
+
+  security_training:
+    scope: compliance/training
+    label: Security training completed
+    description: >
+      Mandatory security-awareness training was completed within its validity
+      window.
+
+  background_check:
+    scope: compliance/background
+    label: Background check cleared
+    description: >
+      A background screening returned a clear result. The agent learns the
+      outcome only — never the underlying report.
+
+  nda_signed:
+    scope: compliance/legal
+    label: NDA executed
+    description: >
+      A current non-disclosure agreement is on file.
+
+# ---------------------------------------------------------------------------
+# defaults — applied to every policy unless it overrides them
+# ---------------------------------------------------------------------------
+defaults:
+  # Weakest acceptable verification strength: none | low | substantial | high
+  minimum_assurance: substantial
+
+  # A claim verified longer ago than this is treated as stale.
+  max_claim_age_days: 365
+
+  # What a stale/expired claim does: review | deny
+  expired_claim_behavior: review
+
+  # What an explicitly failed verification does: review | deny
+  # A hard `deny` here is what makes Scenario C deterministic.
+  failed_claim_behavior: deny
+
+  # Warn when a claim expires within this many days.
+  expiring_soon_days: 30
+
+# ---------------------------------------------------------------------------
+# policies
+# ---------------------------------------------------------------------------
+policies:
+
+  employee_access:
+    label: Standard employee access
+    description: >
+      Baseline access to internal systems for a directly employed member of
+      staff.
+    applies_to_subject_types: [employee]
+    resources: [employee_dashboard, internal_wiki, hr_portal, expense_system]
+    access_levels: [read, write]
+    required_claims:
+      - identity_verified
+      - employment_verified
+    rules:
+      minimum_assurance: high
+      require_manual_approval: false
+
+  contractor_access:
+    label: Contractor access
+    description: >
+      Access for an external contractor. Requires verification of the
+      individual, their engagement, and the company that employs them.
+    applies_to_subject_types: [contractor, vendor, partner]
+    resources: [employee_dashboard, internal_wiki, project_workspace, source_repository]
+    access_levels: [read, write]
+    required_claims:
+      - identity_verified
+      - contractor_verified
+      - company_verified
+    optional_claims:
+      - nda_signed
+    rules:
+      minimum_assurance: high
+      require_manual_approval: false
+      # Missing optional claims never block, but they do raise a flag.
+      flag_missing_optional: true
+
+  privileged_access:
+    label: Privileged / production access
+    description: >
+      Elevated access to production systems and customer data. Always requires
+      a named human approver even when every requirement is satisfied — the
+      four-eyes principle is a control, not a fallback.
+    applies_to_subject_types: [employee]
+    resources: [production_database, admin_console, payment_system, customer_pii_store]
+    access_levels: [read, write, admin]
+    required_claims:
+      - identity_verified
+      - employment_verified
+      - security_training
+    optional_claims:
+      - background_check
+    rules:
+      minimum_assurance: high
+      max_claim_age_days: 180
+      require_manual_approval: true
+      expired_claim_behavior: deny
+      flag_missing_optional: true
+
+  vendor_readonly_access:
+    label: Vendor read-only access
+    description: >
+      Limited read-only access for an external vendor. Lower assurance bar
+      because the blast radius is small and the data is non-sensitive.
+    applies_to_subject_types: [vendor, partner]
+    resources: [internal_wiki, project_workspace]
+    access_levels: [read]
+    required_claims:
+      - identity_verified
+      - company_verified
+    rules:
+      minimum_assurance: substantial
+      require_manual_approval: false
+
+# ---------------------------------------------------------------------------
+# resolution — how a policy is chosen when the caller does not name one
+# ---------------------------------------------------------------------------
+# Evaluated top to bottom; first match wins. Deterministic by construction:
+# an ordered list, not a scoring function.
+resolution:
+  order:
+    - privileged_access
+    - employee_access
+    - contractor_access
+    - vendor_readonly_access
+  # When nothing matches, deny rather than fall back to the most permissive
+  # policy. Fail-closed.
+  no_match_behavior: deny

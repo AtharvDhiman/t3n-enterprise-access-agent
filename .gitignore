@@ -1,0 +1,32 @@
+# --- Secrets: never commit -------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+agent-card.json
+secrets/
+
+# --- Runtime data ----------------------------------------------------------
+data/
+*.jsonl
+!tests/**/*.jsonl
+
+# --- Dependencies / build --------------------------------------------------
+node_modules/
+dist/
+build/
+.vite/
+coverage/
+*.tsbuildinfo
+
+# --- Editor / OS -----------------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# --- Logs ------------------------------------------------------------------
+*.log
+npm-debug.log*
