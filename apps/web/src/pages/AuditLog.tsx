@@ -3,6 +3,7 @@ import { Search } from "lucide-react";
 
 import { api, ApiError, type AuditRecord, type PolicySummary } from "../lib/api";
 import { Card, DecisionChip, EmptyState, ErrorNotice, SourceBadge, inputClass } from "../components/ui";
+import { formatWhen } from "../lib/format";
 
 const PAGE_SIZE = 25;
 
@@ -143,7 +144,7 @@ export function AuditLog() {
                           <SourceBadge source={r.claimSource} />
                         </td>
                         <td className="whitespace-nowrap px-5 py-2.5 text-xs text-ink-500">
-                          {new Date(r.timestamp).toLocaleString()}
+                          {formatWhen(r.timestamp)}
                         </td>
                       </tr>
                       {expanded === r.auditId && (

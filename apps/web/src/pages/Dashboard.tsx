@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Activity, CheckCircle2, ShieldAlert, XCircle } from "lucide-react";
 
 import { api, ApiError, type DashboardSummary, type T3nStatus } from "../lib/api";
+import { formatWhen } from "../lib/format";
 import {
   Card,
   DecisionChip,
@@ -138,7 +139,7 @@ export function Dashboard({ onOpenAudit }: { onOpenAudit: () => void }) {
             />
           ) : (
             <div className="-mx-5 -my-1 overflow-x-auto">
-              <table className="w-full min-w-[560px] text-sm">
+              <table className="w-full min-w-[520px] text-sm">
                 <thead>
                   <tr className="border-b border-ink-100 text-left text-xs uppercase tracking-wide text-ink-500">
                     <th className="px-5 py-2 font-medium">Decision</th>
@@ -160,7 +161,7 @@ export function Dashboard({ onOpenAudit }: { onOpenAudit: () => void }) {
                         <SourceBadge source={r.claimSource} />
                       </td>
                       <td className="whitespace-nowrap px-5 py-2.5 text-xs text-ink-500">
-                        {new Date(r.timestamp).toLocaleString()}
+                        {formatWhen(r.timestamp)}
                       </td>
                     </tr>
                   ))}
