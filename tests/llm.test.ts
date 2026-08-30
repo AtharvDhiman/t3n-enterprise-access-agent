@@ -55,6 +55,29 @@ describe("configuration", () => {
   it("falls back to auto for an unrecognised LLM_PROVIDER", () => {
     expect(loadLlmConfig({ LLM_PROVIDER: "hal9000" }).provider).toBe("auto");
   });
+
+  it("prefers LLM_* over OPENAI_*, so an ambient OPENAI_API_KEY cannot hijack it", () => {
+    // The motivating case: OPENAI_API_KEY set machine-wide beats .env, because
+    // dotenv never overrides an existing variable. A project-scoped name wins
+    // back control without anyone editing their system environment.
+    const llm = loadLlmConfig({
+      OPENAI_API_KEY: "sk-ambient-machine-wide",
+      OPENAI_BASE_URL: "https://api.openai.com/v1",
+      OPENAI_MODEL: "gpt-4o-mini",
+      LLM_API_KEY: "project-key",
+      LLM_BASE_URL: "https://generativelanguage.googleapis.com/v1beta/openai",
+      LLM_MODEL: "gemini-2.5-flash",
+    });
+    expect(llm.openaiApiKey).toBe("project-key");
+    expect(llm.openaiBaseUrl).toContain("googleapis");
+    expect(llm.openaiModel).toBe("gemini-2.5-flash");
+  });
+
+  it("still honours OPENAI_* when no LLM_* equivalent is set", () => {
+    const llm = loadLlmConfig({ OPENAI_API_KEY: "sk-only", OPENAI_MODEL: "gpt-4.1-mini" });
+    expect(llm.openaiApiKey).toBe("sk-only");
+    expect(llm.openaiModel).toBe("gpt-4.1-mini");
+  });
 });
 
 describe("provider selection", () => {

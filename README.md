@@ -157,7 +157,7 @@ Full detail: [docs/architecture.md](docs/architecture.md).
 - Six-screen enterprise dashboard
 - Optional natural-language layer that provably cannot decide anything — and is **not tied to one vendor**
 - Demo mode with four deterministic scenarios that can never impersonate live data
-- 117 tests covering all three decision paths, prompt injection, secret redaction, and config validation
+- 119 tests covering all three decision paths, prompt injection, secret redaction, and config validation
 
 ## Privacy model
 
@@ -215,9 +215,10 @@ Every variable is documented inline in [`.env.example`](.env.example).
 | `T3N_CONTRACT_ID` | no | Defaults to `tee:org-data/contracts` |
 | `CLAIM_SOURCE` | no | `demo` (default) or `live` |
 | `LLM_PROVIDER` | no | `auto` (default), `openai`, or `anthropic` |
-| `OPENAI_API_KEY` | no | Enables the plain-English box. Works with OpenAI, Gemini, Groq, OpenRouter or a local Ollama |
-| `OPENAI_BASE_URL` | no | Any OpenAI-compatible endpoint. Blank = OpenAI |
-| `OPENAI_MODEL` | no | Defaults to `gpt-4o-mini` |
+| `LLM_API_KEY` | no | Enables the plain-English box. Works with OpenAI, Gemini, Groq, OpenRouter or a local Ollama |
+| `LLM_BASE_URL` | no | Any OpenAI-compatible endpoint. Blank = OpenAI |
+| `LLM_MODEL` | no | Defaults to `gpt-4o-mini` |
+| `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` | no | Fallbacks for the three above |
 | `ANTHROPIC_API_KEY` | no | Alternative backend if you hold a Claude key |
 | `AUDIT_SALT` | production | Per-deployment salt for subject pseudonymisation |
 | `PORT`, `LOG_LEVEL`, `AUDIT_LOG_PATH` | no | Server basics |
@@ -293,7 +294,7 @@ Or separately: `npm run dev:server` and `npm run dev:web`.
 ## Testing
 
 ```bash
-npm test          # 117 tests
+npm test          # 119 tests
 npm run verify    # typecheck + lint + tests
 ```
 
@@ -327,19 +328,24 @@ the adapter is plain `fetch` — no extra dependency.
 
 ```bash
 # OpenAI
-OPENAI_API_KEY=sk-...
+LLM_API_KEY=sk-...
 
 # Google Gemini
-OPENAI_API_KEY=<google key>
-OPENAI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
-OPENAI_MODEL=gemini-2.5-flash
+LLM_API_KEY=<google key>
+LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+LLM_MODEL=gemini-2.5-flash
 
 # Groq / OpenRouter / local Ollama — just change the base URL
-OPENAI_BASE_URL=http://localhost:11434/v1
+LLM_BASE_URL=http://localhost:11434/v1
 
 # Or Claude
 ANTHROPIC_API_KEY=sk-ant-...
 ```
+
+`LLM_*` is preferred over `OPENAI_*` on purpose: `OPENAI_API_KEY` is commonly
+set machine-wide, and an ambient variable always beats `.env`. A project-scoped
+name cannot collide, so `.env` stays authoritative with no system changes.
+`OPENAI_*` still works as a fallback.
 
 Verified end-to-end against Gemini (`gemini-2.5-flash`), including the
 prompt-injection cases below. The active provider and model are shown on the

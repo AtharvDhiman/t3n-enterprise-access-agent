@@ -275,12 +275,18 @@ export function loadLlmConfig(env: NodeJS.ProcessEnv = process.env): LlmConfig {
   const requested = (env.LLM_PROVIDER?.trim().toLowerCase() || "auto") as LlmProviderChoice;
   const provider = LLM_PROVIDER_CHOICES.includes(requested) ? requested : "auto";
 
+  // `LLM_*` is preferred over `OPENAI_*` deliberately. `OPENAI_API_KEY` is a
+  // very common ambient variable — often set machine-wide — and dotenv never
+  // overrides an existing environment variable, so a project `.env` silently
+  // loses to it. A project-scoped name cannot collide, which makes `.env`
+  // authoritative without asking anyone to edit their system settings.
   return {
     provider,
-    openaiApiKey: env.OPENAI_API_KEY?.trim() || null,
+    openaiApiKey: env.LLM_API_KEY?.trim() || env.OPENAI_API_KEY?.trim() || null,
     // Defaults to OpenAI; point it at any compatible host to use that instead.
-    openaiBaseUrl: env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1",
-    openaiModel: env.OPENAI_MODEL?.trim() || "gpt-4o-mini",
+    openaiBaseUrl:
+      env.LLM_BASE_URL?.trim() || env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1",
+    openaiModel: env.LLM_MODEL?.trim() || env.OPENAI_MODEL?.trim() || "gpt-4o-mini",
     anthropicApiKey: env.ANTHROPIC_API_KEY?.trim() || null,
     anthropicBaseUrl: env.ANTHROPIC_BASE_URL?.trim() || null,
     anthropicModel: env.ANTHROPIC_MODEL?.trim() || "claude-sonnet-4-5",

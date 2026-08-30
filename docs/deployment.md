@@ -146,7 +146,7 @@ an operator can see *why*. Alert on it separately.
 ```bash
 git pull
 npm ci
-npm run verify        # typecheck + lint + 117 tests
+npm run verify        # typecheck + lint + 119 tests
 npm run build
 sudo systemctl restart t3n-aca
 curl -s localhost:8787/api/health
