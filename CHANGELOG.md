@@ -29,11 +29,11 @@ First release. Built for the Terminal 3 ADK challenge.
   capable of granting access.
 - **Demo mode** with four deterministic scenarios, permanently labelled
   `DEMO DATA` and structurally unable to impersonate live data.
-- **97 tests** covering all three decision paths, prompt injection, secret
+- **102 tests** covering all three decision paths, prompt injection, secret
   redaction, config validation, and the HTTP API. Runs offline.
 - Operational scripts: `t3n:connect`, `t3n:setup`, `t3n:seed`.
 - Documentation: architecture, maintenance, deployment, operations, handover,
-  demo script, security threat model, and seven reproduced platform bug reports.
+  demo script, security threat model, and eight reproduced platform bug reports.
 
 ### Fixed during development
 
@@ -47,6 +47,17 @@ First release. Built for the Terminal 3 ADK challenge.
   reference before any network call.
 - The log redactor over-redacted `scopesAuthorized`, removing exactly the field
   needed to diagnose consent problems.
+- **`npm start` and `npm run dev` were broken.** npm runs a workspace script
+  with cwd set to the workspace, so `config/policies.yaml` and `.env` resolved
+  under `apps/server/`. Both are now resolved from the detected project root
+  (`apps/server/src/paths.ts`), so the server works from any launch directory.
+- **The dev server hung on startup** under `tsx watch`, which deadlocks the
+  Terminal 3 WASM component load. The `dev` script now uses plain `tsx`; see
+  `docs/bugs.md` BUG-8.
+- A React `key` warning from the audit table: the fragment wrapping each row is
+  the array element, so the key belonged there rather than on the inner `<tr>`.
+- Provenance badges and decision chips wrapped onto two lines in narrow table
+  columns.
 
 ### Known issues
 

@@ -16,23 +16,29 @@
  * imports `@t3n-aca/t3n`.
  */
 
-import "dotenv/config";
-
-import { resolve } from "node:path";
+import dotenv from "dotenv";
 import express from "express";
 
 import { AuditStore, createLogger } from "@t3n-aca/core";
 import { PolicyEngine, loadPolicyConfig } from "@t3n-aca/policy-engine";
 import { T3nConnection, loadAppConfig } from "@t3n-aca/t3n";
 
+import { PROJECT_ROOT, resolveFromRoot } from "./paths.ts";
 import { ComplianceService } from "./service.ts";
 import { ComplianceAgent } from "./agent/agent.ts";
 import { createApiRouter } from "./routes/api.ts";
 
+// Loaded with an explicit root-relative path rather than `dotenv/config`, which
+// reads `.env` from the current working directory — and npm runs a workspace
+// script with cwd set to the workspace, not the repo root. Must run before
+// anything reads process.env, including the logger's LOG_LEVEL.
+dotenv.config({ path: resolveFromRoot(".env") });
+
 const log = createLogger("server");
 
-const POLICY_PATH =
-  process.env.POLICY_PATH?.trim() || resolve(process.cwd(), "config/policies.yaml");
+const POLICY_PATH = resolveFromRoot(
+  process.env.POLICY_PATH?.trim() || "config/policies.yaml",
+);
 
 async function main(): Promise<void> {
   const config = loadAppConfig();
@@ -41,13 +47,14 @@ async function main(): Promise<void> {
   const policyConfig = await loadPolicyConfig(POLICY_PATH);
   const engine = new PolicyEngine(policyConfig);
   log.info("policies loaded", {
+    projectRoot: PROJECT_ROOT,
     path: POLICY_PATH,
     version: policyConfig.version,
     policies: engine.policyIds(),
   });
 
   // --- audit --------------------------------------------------------------
-  const audit = new AuditStore(resolve(process.cwd(), config.auditLogPath));
+  const audit = new AuditStore(resolveFromRoot(config.auditLogPath));
   await audit.init();
   log.info("audit journal ready", {
     path: config.auditLogPath,

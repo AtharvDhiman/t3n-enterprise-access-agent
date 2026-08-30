@@ -24,6 +24,9 @@ cp .env.example .env      # fill in T3N_API_KEY for live mode
 npm run dev               # dashboard :5173, API :8787
 ```
 
+The server does not auto-restart on save (see [BUG-8](bugs.md)); restart it
+after a server-side change. The frontend hot-reloads normally.
+
 Demo mode needs no credentials at all — `CLAIM_SOURCE=demo` is the default.
 
 ## Adding a policy
@@ -159,7 +162,7 @@ journal and start a new one, recording the changeover date.
 ## Running the tests
 
 ```bash
-npm test              # 97 tests
+npm test              # 102 tests
 npm run test:watch
 npm run verify        # typecheck + lint + tests — run before every commit
 ```
@@ -183,6 +186,8 @@ See [deployment.md](deployment.md).
 | `invoke is restricted to z: contracts` | Keyed transport cannot reach core contracts ([BUG-4](bugs.md)) | Expected; not used on the live path |
 | Policy file rejected at startup | Strict schema | Read the error — it names the exact path |
 | Vite fails with a WASM error | Something imported `@t3n-aca/t3n` into `apps/web` | Remove it. The SDK must stay server-side |
+| Server hangs at "loading T3N WASM component" | Running under `tsx watch` ([BUG-8](bugs.md)) | Use plain `tsx` — that is what `dev`/`start` already do |
+| `cannot read policy file at …/apps/server/config/policies.yaml` | Paths resolved against cwd instead of the repo root | Fixed by `apps/server/src/paths.ts`; do not reintroduce `resolve(process.cwd(), …)` |
 | Agent DID equals tenant DID | Second claimed key ([BUG-2](bugs.md)) | Use `npm run t3n:setup` |
 
 ## Troubleshooting method

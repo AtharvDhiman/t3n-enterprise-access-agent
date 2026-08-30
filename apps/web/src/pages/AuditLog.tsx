@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { Search } from "lucide-react";
 
 import { api, ApiError, type AuditRecord, type PolicySummary } from "../lib/api";
@@ -127,9 +127,11 @@ export function AuditLog() {
                 </thead>
                 <tbody>
                   {records.map((r) => (
-                    <>
+                    // The Fragment is the array element, so the key belongs
+                    // here — putting it on the inner <tr> leaves the list
+                    // unkeyed and React warns.
+                    <Fragment key={r.auditId}>
                       <tr
-                        key={r.auditId}
                         onClick={() => setExpanded(expanded === r.auditId ? null : r.auditId)}
                         className="cursor-pointer border-b border-ink-50 transition hover:bg-ink-50 last:border-0"
                       >
@@ -148,13 +150,13 @@ export function AuditLog() {
                         </td>
                       </tr>
                       {expanded === r.auditId && (
-                        <tr key={`${r.auditId}-detail`} className="bg-ink-50/60">
+                        <tr className="bg-ink-50/60">
                           <td colSpan={7} className="px-5 py-4">
                             <AuditDetail record={r} />
                           </td>
                         </tr>
                       )}
-                    </>
+                    </Fragment>
                   ))}
                 </tbody>
               </table>

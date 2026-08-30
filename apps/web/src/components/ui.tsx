@@ -79,7 +79,7 @@ export function DecisionChip({ decision }: { decision: Decision }) {
   const s = DECISION_STYLE[decision];
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${s.chip}`}
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${s.chip}`}
     >
       {s.icon}
       {s.label}
@@ -133,14 +133,14 @@ export function DecisionBanner({
 export function SourceBadge({ source }: { source: ClaimSourceKind }) {
   if (source === "LIVE_T3N") {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-md bg-sky-50 px-2 py-1 text-xs font-semibold text-sky-800 ring-1 ring-inset ring-sky-600/20">
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md bg-sky-50 px-2 py-1 text-xs font-semibold text-sky-800 ring-1 ring-inset ring-sky-600/20">
         <ShieldCheck className="h-3.5 w-3.5" aria-hidden />
         LIVE T3N
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-md bg-violet-50 px-2 py-1 text-xs font-semibold text-violet-800 ring-1 ring-inset ring-violet-600/20">
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md bg-violet-50 px-2 py-1 text-xs font-semibold text-violet-800 ring-1 ring-inset ring-violet-600/20">
       <Database className="h-3.5 w-3.5" aria-hidden />
       DEMO DATA
     </span>

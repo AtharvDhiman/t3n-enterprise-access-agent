@@ -75,7 +75,7 @@ npm run t3n:connect             # must print did:t3n:…
 npm run t3n:setup               # creates org + agent, writes DIDs to .env
 npm run t3n:seed                # claim records + consent grants
 #   set CLAIM_SOURCE=live, restart
-npm run verify                  # typecheck + lint + 97 tests
+npm run verify                  # typecheck + lint + 102 tests
 ```
 
 Production: [deployment.md](deployment.md).
@@ -110,7 +110,7 @@ stays up when Terminal 3 is down so you can see why.
 2. **`npm run t3n:connect`** — talks to the SDK directly, bypassing this project's
    code. Separates "Terminal 3 problem" from "our problem". This is the single
    most useful command in the repo.
-3. **[bugs.md](bugs.md)** — seven reproduced platform issues. Check here before
+3. **[bugs.md](bugs.md)** — eight reproduced platform issues. Check here before
    assuming a bug is yours; several are not.
 4. **[maintenance.md → Common failures](maintenance.md)** — symptom/cause/fix table.
 

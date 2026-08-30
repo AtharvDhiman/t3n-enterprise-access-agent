@@ -157,7 +157,7 @@ Full detail: [docs/architecture.md](docs/architecture.md).
 - Six-screen enterprise dashboard
 - Optional natural-language layer that provably cannot decide anything
 - Demo mode with four deterministic scenarios that can never impersonate live data
-- 97 tests covering all three decision paths, prompt injection, secret redaction, and config validation
+- 102 tests covering all three decision paths, prompt injection, secret redaction, and config validation
 
 ## Privacy model
 
@@ -279,10 +279,17 @@ npm run dev
 
 Or separately: `npm run dev:server` and `npm run dev:web`.
 
+> The server runs under plain `tsx`, not `tsx watch`, so it does **not**
+> auto-restart on save — restart it manually after a server-side change. This is
+> deliberate: `tsx watch` deadlocks the Terminal 3 WASM component load and the
+> server never starts ([BUG-8](docs/bugs.md)). The frontend still hot-reloads
+> normally. `npm run dev:watch --workspace @t3n-aca/server` is kept so the
+> behaviour can be re-tested against future releases.
+
 ## Testing
 
 ```bash
-npm test          # 97 tests
+npm test          # 102 tests
 npm run verify    # typecheck + lint + tests
 ```
 

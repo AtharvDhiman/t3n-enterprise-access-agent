@@ -344,6 +344,69 @@ the environment section from it and link to the Quickstart.
 
 ---
 
+## BUG-8 — `tsx watch` deadlocks `loadWasmComponent()`
+
+**Severity: Medium — breaks the obvious dev-server setup.**
+**Status: worked around by not using `tsx watch` for the server.**
+
+### Summary
+
+Running the server under `tsx watch` hangs indefinitely at
+`loadWasmComponent()`. The same file under plain `tsx` loads the component in
+~120 ms and connects in ~3.4 s.
+
+This is a third variant of the SDK's known bundler/runtime friction — the docs
+warn about Next.js, Vite and Webpack, but not about `tsx watch`, which is the
+natural choice for a Node dev server and is what the SDK's own quickstart
+implies (`npx tsx quickstart.ts`).
+
+### Reproduction
+
+```bash
+# hangs at "loading T3N WASM component", never listens
+npx tsx watch apps/server/src/index.ts
+
+# same file, same cwd, same env — works
+npx tsx apps/server/src/index.ts
+```
+
+Observed log under `tsx watch`, with nothing following it for 25+ seconds:
+
+```json
+{"level":"info","scope":"server:t3n","msg":"loading T3N WASM component"}
+```
+
+### Expected vs. actual
+
+- **Expected:** `tsx watch` behaves like `tsx` plus file watching.
+- **Actual:** the WASM component load never resolves, so the server never
+  reaches `listen()`.
+
+`tsx watch` supervises the app in a child process and restarts it on change;
+the WASM component's instantiation appears not to complete under that
+supervisor. We did not root-cause it further, because the workaround is cheap.
+
+### Workaround
+
+Use plain `tsx` for the server. `apps/server`'s `dev` script is
+`tsx src/index.ts`, and `dev:watch` is kept alongside it so the behaviour can be
+re-tested against future SDK or `tsx` releases:
+
+```json
+"dev":       "tsx src/index.ts",
+"dev:watch": "tsx watch src/index.ts"
+```
+
+The cost is losing auto-restart on save. That is a fair trade: the server starts
+in about four seconds, and a dev command that silently hangs is far more
+expensive than one that needs a manual restart.
+
+### Does it block functionality?
+
+Not the product — only the watch-mode developer convenience.
+
+---
+
 ## Not bugs — behaviour that was simply unclear
 
 Recorded because each cost real time, and a sentence of documentation would
