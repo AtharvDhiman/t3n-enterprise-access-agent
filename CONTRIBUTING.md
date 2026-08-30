@@ -11,7 +11,7 @@ npm run dev          # demo mode works with no credentials
 ## Before every commit
 
 ```bash
-npm run verify       # typecheck + lint + 102 tests
+npm run verify       # typecheck + lint + 117 tests
 ```
 
 CI runs the same command. The suite is offline and needs no credentials, so
