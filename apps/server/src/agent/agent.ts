@@ -10,20 +10,23 @@
  * It cannot decide anything. The tools it can reach (see `tools.ts`) expose no
  * operation that grants access or alters a requirement, so there is no sequence
  * of model outputs — however adversarial the prompt that produced them — that
- * changes an outcome. The worst a compromised model can do is ask the wrong
- * question or describe the answer badly, and the decision returned to the
+ * changes an outcome. The worst a compromised or simply bad model can do is ask
+ * the wrong question or describe the answer badly; the decision returned to the
  * caller is the engine's object, not the model's prose.
  *
- * The whole feature is optional. With no `ANTHROPIC_API_KEY` the endpoint
+ * That property is also why the provider is swappable without a security
+ * review: no provider can reach the policy engine.
+ *
+ * The whole feature is optional. With no provider configured the endpoint
  * reports itself unavailable and every other part of the product works
  * unchanged — the dashboard, the request form, the engine and the audit log
  * never call this file.
  */
 
-import Anthropic from "@anthropic-ai/sdk";
-
 import { LlmUnavailableError, createLogger, type Logger } from "@t3n-aca/core";
+
 import { TOOL_DEFINITIONS, executeTool, type ToolContext } from "./tools.ts";
+import { LlmProviderError, type LlmProvider, type LlmToolResult } from "./provider.ts";
 
 const SYSTEM_PROMPT = `You are the assistant interface to an enterprise access & compliance agent.
 
@@ -64,14 +67,20 @@ export interface AgentTurn {
 const MAX_TOOL_ROUNDS = 6;
 
 export class ComplianceAgent {
-  private readonly client: Anthropic;
-  private readonly model: string;
+  private readonly provider: LlmProvider;
   private readonly log: Logger;
 
-  constructor(apiKey: string, model: string, logger?: Logger) {
-    this.client = new Anthropic({ apiKey });
-    this.model = model;
+  constructor(provider: LlmProvider, logger?: Logger) {
+    this.provider = provider;
     this.log = logger ?? createLogger("agent");
+  }
+
+  get providerName(): string {
+    return this.provider.name;
+  }
+
+  get model(): string {
+    return this.provider.model;
   }
 
   /**
@@ -79,72 +88,53 @@ export class ComplianceAgent {
    * a final answer or the round budget is exhausted.
    */
   async run(userMessage: string, ctx: ToolContext): Promise<AgentTurn> {
-    const messages: Anthropic.MessageParam[] = [{ role: "user", content: userMessage }];
+    const conversation = this.provider.start(SYSTEM_PROMPT, userMessage, TOOL_DEFINITIONS);
     const toolsUsed: Array<{ name: string; ok: boolean }> = [];
     let decision: unknown | null = null;
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      let response: Anthropic.Message;
+      let turn;
       try {
-        response = await this.client.messages.create({
-          model: this.model,
-          max_tokens: 1500,
-          system: SYSTEM_PROMPT,
-          tools: TOOL_DEFINITIONS as unknown as Anthropic.Tool[],
-          messages,
-        });
+        turn = await conversation.next();
       } catch (err) {
+        if (err instanceof LlmProviderError) {
+          throw new LlmUnavailableError(err.message, { cause: err });
+        }
         throw new LlmUnavailableError(err instanceof Error ? err.message : String(err), {
           cause: err,
         });
       }
 
-      const toolUses = response.content.filter(
-        (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
-      );
-
-      if (toolUses.length === 0) {
-        const text = response.content
-          .filter((b): b is Anthropic.TextBlock => b.type === "text")
-          .map((b) => b.text)
-          .join("\n")
-          .trim();
+      if (turn.toolCalls.length === 0) {
         return {
-          reply: text || "I could not produce an answer for that request.",
+          reply: turn.text || "I could not produce an answer for that request.",
           toolsUsed,
           decision,
         };
       }
 
-      messages.push({ role: "assistant", content: response.content });
-
-      const results: Anthropic.ToolResultBlockParam[] = [];
-      for (const use of toolUses) {
+      const results: LlmToolResult[] = [];
+      for (const call of turn.toolCalls) {
         try {
-          const result = await executeTool(use.name, use.input, ctx);
-          if (use.name === "evaluate_access_request") decision = result;
-          toolsUsed.push({ name: use.name, ok: true });
-          results.push({
-            type: "tool_result",
-            tool_use_id: use.id,
-            content: JSON.stringify(result),
-          });
+          const result = await executeTool(call.name, call.input, ctx);
+          if (call.name === "evaluate_access_request") decision = result;
+          toolsUsed.push({ name: call.name, ok: true });
+          results.push({ id: call.id, content: JSON.stringify(result), isError: false });
         } catch (err) {
           // Hand the model a safe, generic failure. Never the raw error: it can
           // carry internal detail, and the model will repeat whatever it sees.
           const message = err instanceof Error ? err.message : String(err);
-          this.log.warn("tool execution failed", { tool: use.name, error: message });
-          toolsUsed.push({ name: use.name, ok: false });
+          this.log.warn("tool execution failed", { tool: call.name, error: message });
+          toolsUsed.push({ name: call.name, ok: false });
           results.push({
-            type: "tool_result",
-            tool_use_id: use.id,
-            is_error: true,
+            id: call.id,
             content: JSON.stringify({ error: message }),
+            isError: true,
           });
         }
       }
 
-      messages.push({ role: "user", content: results });
+      conversation.addToolResults(results);
     }
 
     return {

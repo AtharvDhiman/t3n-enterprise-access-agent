@@ -250,7 +250,13 @@ export const api = {
       `/audit${qs ? `?${qs}` : ""}`,
     );
   },
-  agentStatus: () => request<{ available: boolean; reason: string | null }>("/agent/status"),
+  agentStatus: () =>
+    request<{
+      available: boolean;
+      provider: string | null;
+      model: string | null;
+      reason: string | null;
+    }>("/agent/status"),
   ask: (message: string) =>
     request<AgentTurn>("/agent/ask", { method: "POST", body: JSON.stringify({ message }) }),
 };

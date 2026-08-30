@@ -17,6 +17,27 @@ import { T3nConfigMissingError } from "@t3n-aca/core";
 export type T3nEnvironment = "sandbox" | "testnet" | "production";
 export type ClaimSourceMode = "live" | "demo";
 
+/** Which language-model backend the optional NL layer talks to. */
+export type LlmProviderChoice = "auto" | "openai" | "anthropic";
+
+/**
+ * Language-model settings for the optional natural-language layer.
+ *
+ * Deliberately generic. The `openai*` fields address any OpenAI-compatible
+ * chat-completions endpoint — OpenAI, Google Gemini, Groq, OpenRouter, a local
+ * Ollama — so an inheriting team can use whatever credential they already hold
+ * rather than acquiring one specific vendor's.
+ */
+export interface LlmConfig {
+  readonly provider: LlmProviderChoice;
+  readonly openaiApiKey: string | null;
+  readonly openaiBaseUrl: string;
+  readonly openaiModel: string;
+  readonly anthropicApiKey: string | null;
+  readonly anthropicBaseUrl: string | null;
+  readonly anthropicModel: string;
+}
+
 /**
  * How claim reads are actually enforced. Determined at connect time by probing
  * what the platform allows this deployment to do, not by configuration alone.
@@ -70,8 +91,7 @@ export interface AppConfig {
   readonly auditLogPath: string;
   readonly auditSalt: string;
   readonly port: number;
-  readonly anthropicApiKey: string | null;
-  readonly anthropicModel: string;
+  readonly llm: LlmConfig;
 }
 
 function privateKeyProblem(value: string | undefined, name: string): string | null {
@@ -218,7 +238,51 @@ export function loadAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     // runs are reproducible; production must set it (see docs/OPERATIONS.md).
     auditSalt: env.AUDIT_SALT?.trim() || "t3n-aca-development-salt",
     port: Number.isFinite(port) && port > 0 && port < 65536 ? port : 8787,
+    llm: loadLlmConfig(env),
+  };
+}
+
+const LLM_PROVIDER_CHOICES: readonly LlmProviderChoice[] = ["auto", "openai", "anthropic"];
+
+/**
+ * Warn when the credential and the endpoint obviously disagree.
+ *
+ * This exists because it actually happened: `.env` named Gemini's base URL
+ * while the shell already exported an `OPENAI_API_KEY`, and **dotenv does not
+ * override variables that are already set** — so an OpenAI key was sent to
+ * Google and the only feedback was a bare HTTP 400. The check is a heuristic on
+ * key prefix versus host; it never blocks, it just names the likely cause.
+ */
+export function llmKeyHostMismatch(apiKey: string | null, baseUrl: string): string | null {
+  if (!apiKey) return null;
+  let host: string;
+  try {
+    host = new URL(baseUrl).hostname;
+  } catch {
+    return null;
+  }
+  const isOpenAiKey = apiKey.startsWith("sk-");
+  if (isOpenAiKey && !host.includes("openai.com")) {
+    return `OPENAI_API_KEY looks like an OpenAI key ("sk-…") but OPENAI_BASE_URL points at ${host}. Note that a variable already set in your shell overrides .env.`;
+  }
+  if (!isOpenAiKey && host.includes("openai.com")) {
+    return `OPENAI_BASE_URL points at OpenAI but OPENAI_API_KEY does not look like an OpenAI key ("sk-…"). Note that a variable already set in your shell overrides .env.`;
+  }
+  return null;
+}
+
+export function loadLlmConfig(env: NodeJS.ProcessEnv = process.env): LlmConfig {
+  const requested = (env.LLM_PROVIDER?.trim().toLowerCase() || "auto") as LlmProviderChoice;
+  const provider = LLM_PROVIDER_CHOICES.includes(requested) ? requested : "auto";
+
+  return {
+    provider,
+    openaiApiKey: env.OPENAI_API_KEY?.trim() || null,
+    // Defaults to OpenAI; point it at any compatible host to use that instead.
+    openaiBaseUrl: env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1",
+    openaiModel: env.OPENAI_MODEL?.trim() || "gpt-4o-mini",
     anthropicApiKey: env.ANTHROPIC_API_KEY?.trim() || null,
+    anthropicBaseUrl: env.ANTHROPIC_BASE_URL?.trim() || null,
     anthropicModel: env.ANTHROPIC_MODEL?.trim() || "claude-sonnet-4-5",
   };
 }

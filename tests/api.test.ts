@@ -35,8 +35,15 @@ beforeAll(async () => {
     auditLogPath: join(dir, "audit.jsonl"),
     auditSalt: "test-salt",
     port: 0,
-    anthropicApiKey: null,
-    anthropicModel: "claude-sonnet-4-5",
+    llm: {
+      provider: "auto",
+      openaiApiKey: null,
+      openaiBaseUrl: "https://api.openai.com/v1",
+      openaiModel: "gpt-4o-mini",
+      anthropicApiKey: null,
+      anthropicBaseUrl: null,
+      anthropicModel: "claude-sonnet-4-5",
+    },
   };
   const audit = new AuditStore(config.auditLogPath);
   await audit.init();
@@ -104,7 +111,10 @@ describe("read endpoints", () => {
   it("reports the natural-language layer as unavailable when unconfigured", async () => {
     const body = await (await get("/agent/status")).json();
     expect(body.available).toBe(false);
-    expect(body.reason).toContain("ANTHROPIC_API_KEY");
+    expect(body.reason).toBeTruthy();
+    // No provider configured means no provider or model is claimed.
+    expect(body.provider).toBeNull();
+    expect(body.model).toBeNull();
   });
 });
 

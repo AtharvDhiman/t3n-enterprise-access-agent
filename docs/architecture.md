@@ -153,8 +153,21 @@ nothing, and yields `REVIEW_REQUIRED` — exactly like any other unknown subject
 The suite runs seven injection strings through both `subjectRef` and
 `justification` and asserts none produces `APPROVED`.
 
-The layer is optional. Without `ANTHROPIC_API_KEY` the endpoint reports itself
-unavailable and nothing else changes.
+### Provider independence
+
+The agent loop talks to an `LlmProvider` interface, not a vendor SDK. Two
+adapters ship: Anthropic (official SDK) and an OpenAI-compatible adapter built
+on plain `fetch`, which serves OpenAI, Google Gemini, Groq, OpenRouter and a
+local Ollama without adding a dependency. Selection is automatic when one key is
+configured, and `LLM_PROVIDER` settles it when several are.
+
+This matters for handover: the natural-language convenience should not require
+whoever inherits the repo to obtain one specific vendor's credential. It is also
+why swapping providers needs no security review — a provider translates messages
+and tool calls, and cannot reach the policy engine.
+
+The layer is optional. With no key configured the endpoint reports itself
+unavailable, names why, and nothing else changes.
 
 ## Frontend/backend boundary
 

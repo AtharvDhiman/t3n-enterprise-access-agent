@@ -27,8 +27,15 @@ function buildService(): ComplianceService {
     auditLogPath: join(dir, "audit.jsonl"),
     auditSalt: "test-salt",
     port: 0,
-    anthropicApiKey: null,
-    anthropicModel: "claude-sonnet-4-5",
+    llm: {
+      provider: "auto",
+      openaiApiKey: null,
+      openaiBaseUrl: "https://api.openai.com/v1",
+      openaiModel: "gpt-4o-mini",
+      anthropicApiKey: null,
+      anthropicBaseUrl: null,
+      anthropicModel: "claude-sonnet-4-5",
+    },
   };
   return new ComplianceService({
     config,

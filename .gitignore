@@ -9,6 +9,7 @@ secrets/
 
 # --- Runtime data ----------------------------------------------------------
 data/
+.tmp/
 *.jsonl
 !tests/**/*.jsonl
 

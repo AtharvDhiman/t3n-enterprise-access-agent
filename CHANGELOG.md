@@ -25,8 +25,11 @@ First release. Built for the Terminal 3 ADK challenge.
   only, and no claim values or free text.
 - **Enterprise dashboard** (React + Vite + Tailwind + lucide): Dashboard, New
   request, Audit log, Policies, T3N status, Ask.
-- **Optional natural-language layer** whose tool surface exposes no operation
-  capable of granting access.
+- **Optional, provider-agnostic natural-language layer** whose tool surface
+  exposes no operation capable of granting access. Works with any
+  OpenAI-compatible endpoint (OpenAI, Google Gemini, Groq, OpenRouter, local
+  Ollama) or Anthropic, selected automatically from whichever key is present.
+  Verified end-to-end against Gemini, including live prompt-injection attempts.
 - **Demo mode** with four deterministic scenarios, permanently labelled
   `DEMO DATA` and structurally unable to impersonate live data.
 - **102 tests** covering all three decision paths, prompt injection, secret
@@ -58,6 +61,12 @@ First release. Built for the Terminal 3 ADK challenge.
   the array element, so the key belonged there rather than on the inner `<tr>`.
 - Provenance badges and decision chips wrapped onto two lines in narrow table
   columns.
+- The natural-language layer was hard-wired to Anthropic, so a team without that
+  specific credential could not use it at all. It is now provider-agnostic.
+- A variable exported in the shell silently overrode `.env` (standard dotenv
+  precedence), which sent an OpenAI key to Google and surfaced only as a bare
+  HTTP 400. The server now warns at startup naming any shadowed variable, and
+  flags an obvious key/endpoint mismatch.
 
 ### Known issues
 

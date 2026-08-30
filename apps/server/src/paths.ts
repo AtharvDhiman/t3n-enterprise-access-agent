@@ -20,7 +20,7 @@
  * elsewhere.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -54,4 +54,40 @@ export const PROJECT_ROOT = findProjectRoot();
 /** Resolve a possibly-relative configured path against the project root. */
 export function resolveFromRoot(path: string): string {
   return isAbsolute(path) ? path : resolve(PROJECT_ROOT, path);
+}
+
+/**
+ * Names declared in `.env` that an ambient environment variable is overriding.
+ *
+ * `dotenv` deliberately does not overwrite variables already present in the
+ * process environment — correct for deployment, where systemd or a secret
+ * manager should win. Locally it is a trap: an `OPENAI_API_KEY` exported in a
+ * shell profile silently beats the one in `.env`, and the only symptom is a
+ * bare HTTP 4xx from a provider. That happened during development, so the
+ * server now names it at startup instead of leaving it to be rediscovered.
+ *
+ * Only variable *names* are returned — never values.
+ */
+export function shadowedEnvNames(envPath: string, environment: NodeJS.ProcessEnv): string[] {
+  let text: string;
+  try {
+    text = readFileSync(envPath, "utf8");
+  } catch {
+    return [];
+  }
+
+  const shadowed: string[] = [];
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line === "" || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq <= 0) continue;
+    const name = line.slice(0, eq).trim();
+    const fileValue = line.slice(eq + 1).trim();
+    // A blank entry in .env is a placeholder, not an intent to override.
+    if (fileValue === "") continue;
+    const live = environment[name];
+    if (live !== undefined && live !== fileValue) shadowed.push(name);
+  }
+  return shadowed;
 }

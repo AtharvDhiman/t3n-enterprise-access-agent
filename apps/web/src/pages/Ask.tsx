@@ -20,6 +20,10 @@ const EXAMPLES = [
 export function Ask() {
   const [available, setAvailable] = useState<boolean | null>(null);
   const [reason, setReason] = useState<string | null>(null);
+  const [backend, setBackend] = useState<{ provider: string | null; model: string | null }>({
+    provider: null,
+    model: null,
+  });
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -32,6 +36,7 @@ export function Ask() {
       .then((s) => {
         setAvailable(s.available);
         setReason(s.reason);
+        setBackend({ provider: s.provider, model: s.model });
       })
       .catch(() => setAvailable(false));
   }, []);
@@ -74,13 +79,23 @@ export function Ask() {
       {available === false && (
         <ErrorNotice
           message="The natural-language layer is not enabled."
-          remediation={reason ?? "Set ANTHROPIC_API_KEY in .env and restart the server."}
+          remediation={
+            reason ??
+            "Set OPENAI_API_KEY (OpenAI, Gemini, Groq, OpenRouter or a local Ollama) or ANTHROPIC_API_KEY in .env, then restart."
+          }
         />
       )}
 
       {available && (
         <>
-          <Card title="Conversation">
+          <Card
+            title="Conversation"
+            subtitle={
+              backend.provider
+                ? `Answered by ${backend.provider} (${backend.model}). The model explains; it never decides.`
+                : undefined
+            }
+          >
             {messages.length === 0 ? (
               <div className="space-y-4">
                 <EmptyState title="Ask a question to get started" />

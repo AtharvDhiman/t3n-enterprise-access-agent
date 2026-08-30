@@ -59,6 +59,7 @@ const AskSchema = z.object({
 export function createApiRouter(
   service: ComplianceService,
   agent: ComplianceAgent | null,
+  llmUnavailableReason: string | null = null,
 ): Router {
   const router = Router();
 
@@ -170,9 +171,14 @@ export function createApiRouter(
     handle(async (_req, res) => {
       res.json({
         available: agent !== null,
+        // Naming the provider and model is a transparency feature: an operator
+        // should be able to see which backend phrased an explanation.
+        provider: agent?.providerName ?? null,
+        model: agent?.model ?? null,
         reason: agent
           ? null
-          : "ANTHROPIC_API_KEY is not set. Every other feature works without it.",
+          : (llmUnavailableReason ??
+            "No language-model key is configured. Every other feature works without it."),
       });
     }),
   );
@@ -185,7 +191,9 @@ export function createApiRouter(
           error: {
             code: "LLM_UNAVAILABLE",
             message: "The natural-language layer is not enabled on this server.",
-            remediation: "Set ANTHROPIC_API_KEY in .env and restart.",
+            remediation:
+              llmUnavailableReason ??
+              "Set OPENAI_API_KEY (or ANTHROPIC_API_KEY) in .env and restart.",
           },
         });
         return;

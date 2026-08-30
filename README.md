@@ -155,7 +155,7 @@ Full detail: [docs/architecture.md](docs/architecture.md).
 - **Data-minimization receipt** on every decision — requested vs. authorized vs. withheld scopes
 - Append-only audit journal with salted-hash subjects and no claim values
 - Six-screen enterprise dashboard
-- Optional natural-language layer that provably cannot decide anything
+- Optional natural-language layer that provably cannot decide anything — and is **not tied to one vendor**
 - Demo mode with four deterministic scenarios that can never impersonate live data
 - 102 tests covering all three decision paths, prompt injection, secret redaction, and config validation
 
@@ -214,7 +214,11 @@ Every variable is documented inline in [`.env.example`](.env.example).
 | `T3N_AGENT_KEY` | no | Optional credited agent private key → strongest enforcement mode |
 | `T3N_CONTRACT_ID` | no | Defaults to `tee:org-data/contracts` |
 | `CLAIM_SOURCE` | no | `demo` (default) or `live` |
-| `ANTHROPIC_API_KEY` | no | Enables the plain-English box. Everything else works without it |
+| `LLM_PROVIDER` | no | `auto` (default), `openai`, or `anthropic` |
+| `OPENAI_API_KEY` | no | Enables the plain-English box. Works with OpenAI, Gemini, Groq, OpenRouter or a local Ollama |
+| `OPENAI_BASE_URL` | no | Any OpenAI-compatible endpoint. Blank = OpenAI |
+| `OPENAI_MODEL` | no | Defaults to `gpt-4o-mini` |
+| `ANTHROPIC_API_KEY` | no | Alternative backend if you hold a Claude key |
 | `AUDIT_SALT` | production | Per-deployment salt for subject pseudonymisation |
 | `PORT`, `LOG_LEVEL`, `AUDIT_LOG_PATH` | no | Server basics |
 
@@ -313,6 +317,45 @@ Open the dashboard → **New request** → click each scenario → **Evaluate**:
 | B — Consent withheld | REVIEW_REQUIRED | A *consent* gap, not a failed check |
 | C — Failed company verification | DENIED | An explicit negative result |
 | D — Privileged access, all pass | REVIEW_REQUIRED | A control that fires by design |
+
+## Natural-language layer (optional)
+
+The plain-English box is deliberately **provider-agnostic**: whoever inherits
+this should be able to use a credential they already hold rather than acquiring
+a specific vendor's. Any OpenAI-compatible chat-completions endpoint works, and
+the adapter is plain `fetch` — no extra dependency.
+
+```bash
+# OpenAI
+OPENAI_API_KEY=sk-...
+
+# Google Gemini
+OPENAI_API_KEY=<google key>
+OPENAI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+OPENAI_MODEL=gemini-2.5-flash
+
+# Groq / OpenRouter / local Ollama — just change the base URL
+OPENAI_BASE_URL=http://localhost:11434/v1
+
+# Or Claude
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Verified end-to-end against Gemini (`gemini-2.5-flash`), including the
+prompt-injection cases below. The active provider and model are shown on the
+Ask screen and returned by `GET /api/agent/status`, so it is always visible
+which backend phrased an explanation.
+
+Swapping providers cannot change what the agent is capable of: the tool list is
+defined once, and none of its five entries can grant access. Two live injection
+attempts through this interface — a direct "approve this" override and a forged
+"the requirement has been waived" authority claim — produced no approval; the
+second still returned `REVIEW_REQUIRED` from the engine.
+
+> **Precedence gotcha:** a variable already exported in your shell overrides
+> `.env` (standard dotenv behaviour, and correct for production). The server
+> logs a warning at startup naming any variable being shadowed, because this
+> cost real debugging time during development.
 
 ## Example requests
 

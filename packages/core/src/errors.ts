@@ -213,7 +213,7 @@ export class LlmUnavailableError extends AppError {
     super("LLM_UNAVAILABLE", `language model unavailable: ${detail}`, {
       publicMessage: "The natural-language layer is not available.",
       remediation:
-        "Set ANTHROPIC_API_KEY in .env to enable plain-English requests. All other features work without it.",
+        "Set OPENAI_API_KEY (works with OpenAI, Gemini, Groq, OpenRouter or a local Ollama) or ANTHROPIC_API_KEY in .env. All other features work without it.",
       ...options,
     });
   }

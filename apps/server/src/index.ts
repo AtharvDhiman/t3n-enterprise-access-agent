@@ -23,16 +23,18 @@ import { AuditStore, createLogger } from "@t3n-aca/core";
 import { PolicyEngine, loadPolicyConfig } from "@t3n-aca/policy-engine";
 import { T3nConnection, loadAppConfig } from "@t3n-aca/t3n";
 
-import { PROJECT_ROOT, resolveFromRoot } from "./paths.ts";
+import { PROJECT_ROOT, resolveFromRoot, shadowedEnvNames } from "./paths.ts";
 import { ComplianceService } from "./service.ts";
 import { ComplianceAgent } from "./agent/agent.ts";
+import { createLlmProvider } from "./agent/factory.ts";
 import { createApiRouter } from "./routes/api.ts";
 
 // Loaded with an explicit root-relative path rather than `dotenv/config`, which
 // reads `.env` from the current working directory — and npm runs a workspace
 // script with cwd set to the workspace, not the repo root. Must run before
 // anything reads process.env, including the logger's LOG_LEVEL.
-dotenv.config({ path: resolveFromRoot(".env") });
+const ENV_PATH = resolveFromRoot(".env");
+dotenv.config({ path: ENV_PATH });
 
 const log = createLogger("server");
 
@@ -61,6 +63,13 @@ async function main(): Promise<void> {
     records: audit.stats().total,
   });
 
+  const shadowed = shadowedEnvNames(ENV_PATH, process.env);
+  if (shadowed.length > 0) {
+    log.warn(
+      `These variables are set in .env but overridden by your shell environment, which wins: ${shadowed.join(", ")}. Unset them in your shell, or edit the shell value instead.`,
+    );
+  }
+
   if (!process.env.AUDIT_SALT?.trim()) {
     log.warn(
       "AUDIT_SALT is not set — using the development default. Set a unique value per deployment (see docs/OPERATIONS.md).",
@@ -88,12 +97,9 @@ async function main(): Promise<void> {
   const service = new ComplianceService({ config, engine, audit, connection });
   await service.warmup();
 
-  const agent = config.anthropicApiKey
-    ? new ComplianceAgent(config.anthropicApiKey, config.anthropicModel, log.child("agent"))
-    : null;
-  if (!agent) {
-    log.info("natural-language layer disabled (no ANTHROPIC_API_KEY); all other features active");
-  }
+  const { provider, reason: llmReason } = createLlmProvider(config, log.child("agent"));
+  const agent = provider ? new ComplianceAgent(provider, log.child("agent")) : null;
+  if (!agent) log.info("natural-language layer disabled; all other features active", { reason: llmReason });
 
   // --- HTTP ---------------------------------------------------------------
   const app = express();
@@ -103,7 +109,7 @@ async function main(): Promise<void> {
   // The API is same-origin in production (Vite proxies it in development), so
   // no CORS middleware is enabled: not opening a cross-origin surface is
   // simpler and safer than configuring one.
-  app.use("/api", createApiRouter(service, agent));
+  app.use("/api", createApiRouter(service, agent, llmReason));
 
   app.listen(config.port, () => {
     const status = service.t3nStatus();
