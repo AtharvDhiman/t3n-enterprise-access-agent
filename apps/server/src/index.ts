@@ -111,6 +111,42 @@ async function main(): Promise<void> {
   // simpler and safer than configuring one.
   app.use("/api", createApiRouter(service, agent, llmReason));
 
+  // This port serves the API only — the dashboard is a separate static build
+  // (see docs/deployment.md). Someone who opens it in a browser expecting the
+  // UI would otherwise get Express's bare "Cannot GET /", which explains
+  // nothing. Point them at the right place and list what does exist here.
+  app.get("/", (_req, res) => {
+    res.json({
+      service: "T3N Enterprise Access & Compliance Agent — API",
+      note: "This port serves the JSON API. The dashboard runs separately.",
+      dashboard: "http://localhost:5173 (development)",
+      endpoints: [
+        "GET  /api/health",
+        "GET  /api/dashboard",
+        "GET  /api/t3n/status",
+        "GET  /api/policies",
+        "GET  /api/demo/scenarios",
+        "POST /api/requests",
+        "GET  /api/audit",
+        "GET  /api/audit/:auditId",
+        "GET  /api/agent/status",
+        "POST /api/agent/ask",
+      ],
+    });
+  });
+
+  // Unknown paths answer in the same error shape as every other route, rather
+  // than falling through to Express's HTML default.
+  app.use((req, res) => {
+    res.status(404).json({
+      error: {
+        code: "NOT_FOUND",
+        message: `No such endpoint: ${req.method} ${req.path}`,
+        remediation: "See GET / for the list of available endpoints.",
+      },
+    });
+  });
+
   app.listen(config.port, () => {
     const status = service.t3nStatus();
     log.info("server listening", {
