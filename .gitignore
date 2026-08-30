@@ -21,6 +21,9 @@ build/
 coverage/
 *.tsbuildinfo
 
+# --- Local tooling (never published) ----------------------------------------
+.claude/
+
 # --- Editor / OS -----------------------------------------------------------
 .DS_Store
 Thumbs.db
