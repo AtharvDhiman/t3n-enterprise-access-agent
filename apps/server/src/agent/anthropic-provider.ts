@@ -14,6 +14,7 @@ import {
   type LlmProvider,
   type LlmToolCall,
   type LlmToolResult,
+  type LlmHistoryTurn,
   type LlmToolSchema,
   type LlmTurn,
 } from "./provider.ts";
@@ -27,8 +28,12 @@ class AnthropicConversation implements LlmConversation {
     private readonly systemPrompt: string,
     userMessage: string,
     private readonly tools: readonly LlmToolSchema[],
+    history: readonly LlmHistoryTurn[] = [],
   ) {
-    this.messages = [{ role: "user", content: userMessage }];
+    this.messages = [
+      ...history.map((h) => ({ role: h.role, content: h.content }) as Anthropic.MessageParam),
+      { role: "user", content: userMessage },
+    ];
   }
 
   addToolResults(results: LlmToolResult[]): void {
@@ -100,7 +105,15 @@ export class AnthropicProvider implements LlmProvider {
     systemPrompt: string,
     userMessage: string,
     tools: readonly LlmToolSchema[],
+    history: readonly LlmHistoryTurn[] = [],
   ): LlmConversation {
-    return new AnthropicConversation(this.client, this.model, systemPrompt, userMessage, tools);
+    return new AnthropicConversation(
+      this.client,
+      this.model,
+      systemPrompt,
+      userMessage,
+      tools,
+      history,
+    );
   }
 }

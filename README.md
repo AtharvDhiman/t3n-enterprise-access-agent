@@ -157,7 +157,7 @@ Full detail: [docs/architecture.md](docs/architecture.md).
 - Six-screen enterprise dashboard
 - Optional natural-language layer that provably cannot decide anything — and is **not tied to one vendor**
 - Demo mode with four deterministic scenarios that can never impersonate live data
-- 119 tests covering all three decision paths, prompt injection, secret redaction, and config validation
+- 121 tests covering all three decision paths, prompt injection, secret redaction, and config validation
 
 ## Privacy model
 
@@ -294,7 +294,7 @@ Or separately: `npm run dev:server` and `npm run dev:web`.
 ## Testing
 
 ```bash
-npm test          # 119 tests
+npm test          # 121 tests
 npm run verify    # typecheck + lint + tests
 ```
 

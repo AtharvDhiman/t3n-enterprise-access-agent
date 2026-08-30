@@ -32,7 +32,7 @@ First release. Built for the Terminal 3 ADK challenge.
   Verified end-to-end against Gemini, including live prompt-injection attempts.
 - **Demo mode** with four deterministic scenarios, permanently labelled
   `DEMO DATA` and structurally unable to impersonate live data.
-- **119 tests** covering all three decision paths, prompt injection, secret
+- **121 tests** covering all three decision paths, prompt injection, secret
   redaction, config validation, and the HTTP API. Runs offline.
 - Operational scripts: `t3n:connect`, `t3n:setup`, `t3n:seed`.
 - Documentation: architecture, maintenance, deployment, operations, handover,

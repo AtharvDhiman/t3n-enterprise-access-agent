@@ -26,7 +26,12 @@
 import { LlmUnavailableError, createLogger, type Logger } from "@t3n-aca/core";
 
 import { TOOL_DEFINITIONS, executeTool, type ToolContext } from "./tools.ts";
-import { LlmProviderError, type LlmProvider, type LlmToolResult } from "./provider.ts";
+import {
+  LlmProviderError,
+  type LlmHistoryTurn,
+  type LlmProvider,
+  type LlmToolResult,
+} from "./provider.ts";
 
 const SYSTEM_PROMPT = `You are the assistant interface to an enterprise access & compliance agent.
 
@@ -87,8 +92,17 @@ export class ComplianceAgent {
    * Run one conversational turn, executing tool calls until the model produces
    * a final answer or the round budget is exhausted.
    */
-  async run(userMessage: string, ctx: ToolContext): Promise<AgentTurn> {
-    const conversation = this.provider.start(SYSTEM_PROMPT, userMessage, TOOL_DEFINITIONS);
+  async run(
+    userMessage: string,
+    ctx: ToolContext,
+    history: readonly LlmHistoryTurn[] = [],
+  ): Promise<AgentTurn> {
+    const conversation = this.provider.start(
+      SYSTEM_PROMPT,
+      userMessage,
+      TOOL_DEFINITIONS,
+      history,
+    );
     const toolsUsed: Array<{ name: string; ok: boolean }> = [];
     let decision: unknown | null = null;
 

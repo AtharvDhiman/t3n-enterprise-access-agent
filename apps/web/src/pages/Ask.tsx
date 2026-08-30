@@ -53,7 +53,11 @@ export function Ask() {
     setBusy(true);
     setError(null);
     try {
-      const turn: AgentTurn = await api.ask(message);
+      // Replay what the user can actually see, so a clarifying question can be
+      // answered naturally. Capped to the last few turns: enough for a
+      // follow-up, without resending a whole session on every message.
+      const history = messages.slice(-8).map((m) => ({ role: m.role, content: m.text }));
+      const turn: AgentTurn = await api.ask(message, history);
       setMessages((m) => [
         ...m,
         { role: "assistant", text: turn.reply, tools: turn.toolsUsed },

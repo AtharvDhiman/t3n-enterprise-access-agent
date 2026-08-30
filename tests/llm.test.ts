@@ -182,3 +182,52 @@ describe("the tool surface is provider-independent", () => {
     }
   });
 });
+
+describe("conversation history", () => {
+  // Regression: the model would ask a clarifying question the user could never
+  // answer, because every message started a fresh conversation.
+  it("replays prior turns into the provider", async () => {
+    const seen: unknown[] = [];
+    const fake = {
+      name: "fake",
+      model: "fake-1",
+      start(_system: string, _user: string, _tools: readonly unknown[], history?: unknown) {
+        seen.push(history);
+        return {
+          next: async () => ({ text: "ok", toolCalls: [] }),
+          addToolResults: () => {},
+        };
+      },
+    };
+
+    const { ComplianceAgent } = await import("../apps/server/src/agent/agent");
+    const agent = new ComplianceAgent(fake as never);
+    await agent.run("he is an employee", { service: null as never, actor: "test" }, [
+      { role: "user", content: "can Ben get access?" },
+      { role: "assistant", content: "What is Ben's subject type?" },
+    ]);
+
+    expect(seen[0]).toEqual([
+      { role: "user", content: "can Ben get access?" },
+      { role: "assistant", content: "What is Ben's subject type?" },
+    ]);
+  });
+
+  it("defaults to no history, so a first message carries nothing", async () => {
+    const seen: unknown[] = [];
+    const fake = {
+      name: "fake",
+      model: "fake-1",
+      start(_s: string, _u: string, _t: readonly unknown[], history?: unknown) {
+        seen.push(history);
+        return { next: async () => ({ text: "ok", toolCalls: [] }), addToolResults: () => {} };
+      },
+    };
+    const { ComplianceAgent } = await import("../apps/server/src/agent/agent");
+    await new ComplianceAgent(fake as never).run("hello", {
+      service: null as never,
+      actor: "test",
+    });
+    expect(seen[0]).toEqual([]);
+  });
+});

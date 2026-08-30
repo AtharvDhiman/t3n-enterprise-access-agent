@@ -17,6 +17,7 @@ import {
   type LlmProvider,
   type LlmToolCall,
   type LlmToolResult,
+  type LlmHistoryTurn,
   type LlmToolSchema,
   type LlmTurn,
 } from "./provider.ts";
@@ -57,9 +58,11 @@ class OpenAiConversation implements LlmConversation {
     systemPrompt: string,
     userMessage: string,
     tools: readonly LlmToolSchema[],
+    history: readonly LlmHistoryTurn[] = [],
   ) {
     this.messages = [
       { role: "system", content: systemPrompt },
+      ...history.map((h) => ({ role: h.role, content: h.content }) as ChatMessage),
       { role: "user", content: userMessage },
     ];
     this.tools = toOpenAiTools(tools);
@@ -190,6 +193,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     systemPrompt: string,
     userMessage: string,
     tools: readonly LlmToolSchema[],
+    history: readonly LlmHistoryTurn[] = [],
   ): LlmConversation {
     return new OpenAiConversation(
       this.baseUrl,
@@ -198,6 +202,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       systemPrompt,
       userMessage,
       tools,
+      history,
     );
   }
 }

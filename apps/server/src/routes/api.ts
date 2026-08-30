@@ -52,8 +52,24 @@ const AuditQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).optional(),
 });
 
+/**
+ * The client owns the conversation thread and replays it here.
+ *
+ * Keeping the server stateless means no session store to operate, and no
+ * cross-user leakage risk from a shared cache. The history is bounded on both
+ * length and size so a caller cannot use it to smuggle an unbounded prompt.
+ */
 const AskSchema = z.object({
   message: z.string().min(1).max(4000),
+  history: z
+    .array(
+      z.object({
+        role: z.enum(["user", "assistant"]),
+        content: z.string().min(1).max(8000),
+      }),
+    )
+    .max(20)
+    .optional(),
 });
 
 export function createApiRouter(
@@ -205,7 +221,11 @@ export function createApiRouter(
         });
         return;
       }
-      const turn = await agent.run(parsed.data.message, { service, actor: "agent" });
+      const turn = await agent.run(
+        parsed.data.message,
+        { service, actor: "agent" },
+        parsed.data.history ?? [],
+      );
       res.json(turn);
     }),
   );

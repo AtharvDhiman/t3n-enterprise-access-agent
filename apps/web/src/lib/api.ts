@@ -257,6 +257,9 @@ export const api = {
       model: string | null;
       reason: string | null;
     }>("/agent/status"),
-  ask: (message: string) =>
-    request<AgentTurn>("/agent/ask", { method: "POST", body: JSON.stringify({ message }) }),
+  ask: (message: string, history: Array<{ role: "user" | "assistant"; content: string }> = []) =>
+    request<AgentTurn>("/agent/ask", {
+      method: "POST",
+      body: JSON.stringify({ message, history }),
+    }),
 };

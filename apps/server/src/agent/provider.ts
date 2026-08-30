@@ -67,11 +67,30 @@ export interface LlmConversation {
   addToolResults(results: LlmToolResult[]): void;
 }
 
+/**
+ * A prior exchange, replayed so a follow-up has context.
+ *
+ * Only the *text* of earlier turns is carried, not their tool calls. That is
+ * enough for the case this exists to serve — the model asks a clarifying
+ * question and the user answers it — without replaying tool state the engine
+ * has already acted on. Every tool call is re-issued fresh against live data,
+ * so an answer can never be assembled from a stale earlier result.
+ */
+export interface LlmHistoryTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export interface LlmProvider {
   /** Provider id, surfaced in `/api/agent/status` for transparency. */
   readonly name: string;
   readonly model: string;
-  start(systemPrompt: string, userMessage: string, tools: readonly LlmToolSchema[]): LlmConversation;
+  start(
+    systemPrompt: string,
+    userMessage: string,
+    tools: readonly LlmToolSchema[],
+    history?: readonly LlmHistoryTurn[],
+  ): LlmConversation;
 }
 
 /** Raised when a provider cannot be reached or replies unusably. */
