@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { Search } from "lucide-react";
+import { ChevronDown, Search } from "lucide-react";
 
 import { api, ApiError, type AuditRecord, type PolicySummary } from "../lib/api";
 import { Card, DecisionChip, EmptyState, ErrorNotice, SourceBadge, inputClass } from "../components/ui";
@@ -107,7 +107,10 @@ export function AuditLog() {
 
       {error && <ErrorNotice message={error.message} remediation={error.remediation} />}
 
-      <Card title={`${total} decision${total === 1 ? "" : "s"}`} subtitle="Newest first">
+      <Card
+        title={`${total} decision${total === 1 ? "" : "s"}`}
+        subtitle="Newest first — select any row to see why that decision was made"
+      >
         {records.length === 0 ? (
           <EmptyState title="No matching decisions" hint="Adjust the filters, or submit a request." />
         ) : (
@@ -116,13 +119,13 @@ export function AuditLog() {
               <table className="w-full min-w-[720px] text-sm">
                 <thead>
                   <tr className="border-b border-ink-100 text-left text-xs uppercase tracking-wide text-ink-500">
-                    <th className="px-5 py-2 font-medium">Decision</th>
-                    <th className="px-5 py-2 font-medium">Resource</th>
-                    <th className="px-5 py-2 font-medium">Level</th>
-                    <th className="px-5 py-2 font-medium">Policy</th>
-                    <th className="px-5 py-2 font-medium">Type</th>
-                    <th className="px-5 py-2 font-medium">Source</th>
-                    <th className="px-5 py-2 font-medium">When</th>
+                    <th className="px-4 py-2 font-medium">Decision</th>
+                    <th className="px-4 py-2 font-medium">Resource</th>
+                    <th className="px-4 py-2 font-medium">Level</th>
+                    <th className="px-4 py-2 font-medium">Policy</th>
+                    <th className="px-4 py-2 font-medium">Type</th>
+                    <th className="px-4 py-2 font-medium">Source</th>
+                    <th className="px-4 py-2 font-medium">When</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -133,25 +136,37 @@ export function AuditLog() {
                     <Fragment key={r.auditId}>
                       <tr
                         onClick={() => setExpanded(expanded === r.auditId ? null : r.auditId)}
-                        className="cursor-pointer border-b border-ink-50 transition hover:bg-ink-50 last:border-0"
+                        aria-expanded={expanded === r.auditId}
+                        title="Show why this decision was made"
+                        className={`cursor-pointer border-b border-ink-50 transition last:border-0 ${
+                          expanded === r.auditId ? "bg-ink-50" : "hover:bg-ink-50"
+                        }`}
                       >
-                        <td className="px-5 py-2.5">
-                          <DecisionChip decision={r.decision} />
+                        <td className="px-4 py-2.5">
+                          <span className="flex items-center gap-2">
+                            <ChevronDown
+                              className={`h-3.5 w-3.5 shrink-0 text-ink-400 transition-transform ${
+                                expanded === r.auditId ? "rotate-180 text-ink-700" : ""
+                              }`}
+                              aria-hidden
+                            />
+                            <DecisionChip decision={r.decision} />
+                          </span>
                         </td>
-                        <td className="px-5 py-2.5 font-mono text-xs text-ink-800">{r.resource}</td>
-                        <td className="px-5 py-2.5 font-mono text-xs text-ink-600">{r.accessLevel}</td>
-                        <td className="px-5 py-2.5 font-mono text-xs text-ink-600">{r.policyId}</td>
-                        <td className="px-5 py-2.5 text-xs text-ink-600">{r.subjectType}</td>
-                        <td className="px-5 py-2.5">
+                        <td className="px-4 py-2.5 font-mono text-xs text-ink-800">{r.resource}</td>
+                        <td className="px-4 py-2.5 font-mono text-xs text-ink-600">{r.accessLevel}</td>
+                        <td className="px-4 py-2.5 font-mono text-xs text-ink-600">{r.policyId}</td>
+                        <td className="px-4 py-2.5 text-xs text-ink-600">{r.subjectType}</td>
+                        <td className="px-4 py-2.5">
                           <SourceBadge source={r.claimSource} />
                         </td>
-                        <td className="whitespace-nowrap px-5 py-2.5 text-xs text-ink-500">
+                        <td className="whitespace-nowrap px-4 py-2.5 text-xs text-ink-500">
                           {formatWhen(r.timestamp)}
                         </td>
                       </tr>
                       {expanded === r.auditId && (
                         <tr className="bg-ink-50/60">
-                          <td colSpan={7} className="px-5 py-4">
+                          <td colSpan={7} className="px-4 py-4">
                             <AuditDetail record={r} />
                           </td>
                         </tr>
