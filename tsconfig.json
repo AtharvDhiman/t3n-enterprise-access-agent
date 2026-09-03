@@ -36,5 +36,9 @@
     "scripts/**/*.ts",
     "tests/**/*.ts"
   ],
-  "exclude": ["node_modules", "dist", "**/dist"]
+  // capture-screenshots.ts imports playwright, which is deliberately NOT a
+  // dependency of this project — it is heavy, and only needed when someone
+  // regenerates the README gallery. The script documents how to install it
+  // temporarily. Excluded so `npm run verify` does not require it.
+  "exclude": ["node_modules", "dist", "**/dist", "scripts/capture-screenshots.ts"]
 }
