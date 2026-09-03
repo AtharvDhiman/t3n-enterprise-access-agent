@@ -98,6 +98,56 @@ The result: the enterprise gets a defensible decision, the agent holds the
 narrowest possible authority, and the subject keeps their documents and can
 revoke access at any time.
 
+## See it
+
+> Screenshots are from a live run against Terminal 3 testnet. The `LIVE T3N` /
+> `DEMO DATA` badge on every decision says which data produced it — demo
+> fixtures can never present themselves as real.
+
+### The decision, and what the agent was *not* allowed to see
+
+![Review required, with the withheld-scopes panel](docs/screenshots/04-review-required.png)
+
+The policy needed four scopes. Consent covered two. So the agent read exactly two
+claims and told the operator which consent to request — rather than guessing, and
+rather than reading data it was not granted.
+
+### Dashboard
+
+![Dashboard](docs/screenshots/01-dashboard.png)
+
+### Submitting a request
+
+![New access request](docs/screenshots/02-new-request.png)
+
+### Approved, and denied
+
+![Approved](docs/screenshots/03-approved.png)
+
+![Denied](docs/screenshots/05-denied.png)
+
+An **explicit failure** denies. An **absent** check escalates instead. Keeping
+those apart is the point.
+
+### Audit log — subjects stored as salted hashes
+
+![Audit log with a row expanded](docs/screenshots/06-audit-log.png)
+
+Enough to prove which decision concerned whom, without the log becoming a
+browsable list of who was investigated. Claim *ids* are recorded; claim *values*
+never are.
+
+### Policies, and the claim → scope mapping
+
+![Policies](docs/screenshots/07-policies.png)
+
+### Terminal 3 connection
+
+![T3N status](docs/screenshots/08-t3n-status.png)
+
+Two separate identities, both authenticated: the tenant, and the agent with its
+own DID and its own credential.
+
 ## Architecture
 
 ```
