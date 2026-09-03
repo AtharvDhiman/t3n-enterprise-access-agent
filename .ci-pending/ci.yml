@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # This repository's default branch is `master`. `main` is listed too so the
+    # workflow keeps running if the branch is ever renamed.
+    branches: [master, main]
   pull_request:
 
 jobs:

@@ -6,6 +6,10 @@ agent — ever receiving the personal data behind the answer.**
 Built on the [Terminal 3](https://terminal3.io) Agent Developer Kit.
 Connected live to T3N testnet.
 
+[![CI](https://github.com/AtharvDhiman/t3n-enterprise-access-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/AtharvDhiman/t3n-enterprise-access-agent/actions/workflows/ci.yml)
+[![tests](https://img.shields.io/badge/tests-121%20passing-brightgreen)](tests/)
+[![licence](https://img.shields.io/badge/licence-MIT-blue)](LICENSE)
+
 ---
 
 ## The problem
