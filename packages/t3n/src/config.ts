@@ -222,6 +222,43 @@ export function requireT3nConfig(env: NodeJS.ProcessEnv = process.env): T3nConfi
   return config;
 }
 
+/**
+ * The salt used when none is configured.
+ *
+ * Deliberately named and exported so it is obvious in a code search that this
+ * value is public, and so the startup check can recognise it.
+ */
+export const DEV_AUDIT_SALT = "t3n-aca-development-salt";
+
+/** Shortest salt worth calling one. 16 bytes of hex is the documented advice. */
+const MIN_AUDIT_SALT_LENGTH = 16;
+
+/**
+ * Why the configured audit salt is unusable, or null when it is fine.
+ *
+ * The audit journal pseudonymises subjects by hashing them under this salt, and
+ * the whole control rests on the salt being secret. Falling back to a constant
+ * committed in this repository made the hashes trivially reversible: with the
+ * source in hand, one hash per candidate DID recovers the subject, and the
+ * subject DIDs for this deployment are published in its own documentation. A
+ * journal produced that way is a per-person access-request history, not a
+ * pseudonymised one, and every deployment that skipped the variable shared one
+ * salt — so their journals were cross-linkable too, the exact property the salt
+ * exists to prevent.
+ *
+ * A startup warning was the only guard, and a warning is a line of log output
+ * that a running deployment sails straight past. In live mode this is now fatal.
+ */
+export function auditSaltProblem(env: NodeJS.ProcessEnv = process.env): string | null {
+  const raw = env.AUDIT_SALT?.trim();
+  if (!raw) return "AUDIT_SALT is not set";
+  if (raw === DEV_AUDIT_SALT) return "AUDIT_SALT is still the public development value";
+  if (raw.length < MIN_AUDIT_SALT_LENGTH) {
+    return `AUDIT_SALT is only ${raw.length} characters; at least ${MIN_AUDIT_SALT_LENGTH} are needed`;
+  }
+  return null;
+}
+
 export function loadAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const { config, error, warnings } = loadT3nConfig(env);
   const requested = (env.CLAIM_SOURCE?.trim().toLowerCase() || "demo") as ClaimSourceMode;
@@ -234,9 +271,9 @@ export function loadAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     t3nConfigError: error,
     t3nWarnings: warnings,
     auditLogPath: env.AUDIT_LOG_PATH?.trim() || "./data/audit.jsonl",
-    // Deployment-scoped salt. Falls back to a fixed development value so demo
-    // runs are reproducible; production must set it (see docs/OPERATIONS.md).
-    auditSalt: env.AUDIT_SALT?.trim() || "t3n-aca-development-salt",
+    // Deployment-scoped salt. See `auditSaltProblem` for why the fallback is
+    // permitted in demo mode only.
+    auditSalt: env.AUDIT_SALT?.trim() || DEV_AUDIT_SALT,
     port: Number.isFinite(port) && port > 0 && port < 65536 ? port : 8787,
     llm: loadLlmConfig(env),
   };

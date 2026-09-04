@@ -586,7 +586,12 @@ export class PolicyEngine {
         auditId,
         dataAccess: {
           source: claimSet.source,
-          requestedScopes,
+          // What was ACTUALLY asked of the source, not what this policy would
+          // like in the abstract. The service caps the request to the scopes
+          // the governing policy justifies, so reporting the policy's full list
+          // here would overstate the read — and this block is the
+          // data-minimization receipt, the one place that must not.
+          requestedScopes: claimSet.requestedScopes,
           authorizedScopes: claimSet.authorizedScopes,
           deniedScopes: claimSet.deniedScopes,
           consentVerified: claimSet.consentVerified,
@@ -671,7 +676,12 @@ export class PolicyEngine {
       auditId,
       dataAccess: {
         source: claimSet.source,
-        requestedScopes,
+        // What was ACTUALLY asked of the source, not what this policy would
+        // like in the abstract. The service caps the request to the scopes the
+        // governing policy justifies, so reporting the policy's full list here
+        // would overstate the read — and this block is the data-minimization
+        // receipt, the one place that must never do that.
+        requestedScopes: claimSet.requestedScopes,
         authorizedScopes: claimSet.authorizedScopes,
         deniedScopes: claimSet.deniedScopes,
         consentVerified: claimSet.consentVerified,

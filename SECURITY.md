@@ -101,7 +101,10 @@ defence-in-depth, not the control. The control is that the capability is absent.
 - The domain model has **no field** for a date of birth, address, document
   number, or photograph. Adding one is a design regression.
 - Scopes are derived from the resolved policy *before* the subject is passed to
-  any source, so no input can widen what is read.
+  any source. A caller may name a `policyId` to ask what a particular policy
+  would say, but the scope set is capped to the policy the resolver would have
+  chosen, so **no input can widen what is read** — a named policy that wants
+  more sees those claims as missing requirements rather than reading them.
 - What may actually be read is bounded by the **on-network grant record**, read
   fresh each evaluation — so revocation takes effect immediately.
 - Consent is checked *before* reading. An unauthorized request discloses nothing:
@@ -115,7 +118,11 @@ defence-in-depth, not the control. The control is that the capability is absent.
 - Claim **ids** recorded; values, assurance levels and verification dates are not.
 - Justification free-text is never stored and never sent to T3N.
 - `AUDIT_SALT` is per-deployment, so journals from different deployments are not
-  cross-linkable.
+  cross-linkable. In live mode the server **refuses to start** without one: the
+  fallback is a constant committed in this repository, and a hash keyed on a
+  public value is reversible by anyone holding the source — one HMAC per
+  candidate DID, and DIDs are public identifiers. Subjects are keyed with
+  HMAC-SHA256 rather than a salt-prefixed digest.
 
 ### Transport & input
 
@@ -139,8 +146,11 @@ node URLs, upstream bodies, and key material out of responses (tested).
 
 Things a reviewer might expect, with the reason they are absent:
 
-- **No encryption of the audit file at rest.** It contains no personal data by
-  construction. Use disk encryption if your environment requires it.
+- **No encryption of the audit file at rest.** It carries no personal data:
+  subjects appear only as HMAC pseudonyms, claim *values* are never written, and
+  `resource` and `accessLevel` are constrained to lowercase identifiers so free
+  text cannot be smuggled into permanent evidence through them. Use disk
+  encryption if your environment requires it.
 - **No signature on audit records.** The file is append-only and
   operator-controlled. T3N's `getActivityLog` already provides hash-chained
   tamper evidence and is the right place to mirror this — listed under future

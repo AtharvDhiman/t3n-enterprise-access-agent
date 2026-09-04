@@ -7,7 +7,7 @@ Built on the [Terminal 3](https://terminal3.io) Agent Developer Kit.
 Connected live to T3N testnet.
 
 [![CI](https://github.com/AtharvDhiman/t3n-enterprise-access-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/AtharvDhiman/t3n-enterprise-access-agent/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-180%20passing-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-204%20passing-brightgreen)](tests/)
 [![licence](https://img.shields.io/badge/licence-MIT-blue)](LICENSE)
 
 ---
@@ -211,7 +211,7 @@ Full detail: [docs/architecture.md](docs/architecture.md).
 - Six-screen enterprise dashboard
 - Optional natural-language layer that provably cannot decide anything — and is **not tied to one vendor**
 - Demo mode with four deterministic scenarios that can never impersonate live data
-- 180 tests covering all three decision paths, prompt injection, secret redaction, and config validation
+- 204 tests covering all three decision paths, prompt injection, secret redaction, and config validation
 
 ## Privacy model
 
@@ -354,7 +354,7 @@ Or separately: `npm run dev:server` and `npm run dev:web`.
 ## Testing
 
 ```bash
-npm test          # 180 tests
+npm test          # 204 tests
 npm run verify    # typecheck + lint + tests
 ```
 

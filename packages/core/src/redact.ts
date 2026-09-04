@@ -6,7 +6,7 @@
  * conservative redactor than to audit every call site.
  */
 
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 
 /** Keys whose values are never logged, matched case-insensitively as substrings. */
 const SENSITIVE_KEY_PATTERNS = [
@@ -176,7 +176,12 @@ export function hashSubject(subjectRef: string, salt: string): string {
   // how the DID happened to be typed — and broke the documented proof that an
   // auditor can recompute the hash from a known subject reference.
   const canonical = subjectRef.trim().toLowerCase();
-  return createHash("sha256").update(`${salt}:${canonical}`).digest("hex").slice(0, 32);
+  // HMAC, not `sha256(salt + ":" + value)`. The prefix construction is only as
+  // good as the secrecy of the salt and is the wrong primitive for a keyed
+  // hash; HMAC is the right one and costs nothing here. Changing it also
+  // invalidates every hash produced under the old fixed development salt, which
+  // is the intended effect — those were reversible.
+  return createHmac("sha256", salt).update(canonical).digest("hex").slice(0, 32);
 }
 
 /** Stable, collision-resistant audit identifier. */

@@ -10,7 +10,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { AuditStore, hashSubject, maskSecret, redact, scrubText } from "@t3n-aca/core";
+import { createHash, createHmac } from "node:crypto";
+
+import {
+  AccessRequestSchema,
+  AuditStore,
+  hashSubject,
+  maskSecret,
+  redact,
+  scrubText,
+} from "@t3n-aca/core";
+import { DEV_AUDIT_SALT, auditSaltProblem } from "@t3n-aca/t3n";
 import { AppError, T3nAuthError } from "@t3n-aca/core";
 import { DemoClaimSource, loadT3nConfig } from "@t3n-aca/t3n";
 
@@ -306,5 +316,95 @@ describe("free-text redaction must cover every credential shape this system hand
     const out = JSON.stringify(redact(`failed for ${AGENT_CRED}`));
     expect(out).toContain("t3n_ke");
     expect(out).toContain("…");
+  });
+});
+
+describe("the audit salt must not be a value published in this repository", () => {
+  // The journal pseudonymises subjects by hashing them under this salt, and the
+  // whole control rests on the salt being secret. Falling back to a constant
+  // committed here made the hashes trivially reversible: one hash per candidate
+  // DID recovers the subject, and this deployment's own docs publish the
+  // subject DID. Every deployment that skipped the variable also shared one
+  // salt, so their journals were cross-linkable — exactly what a salt prevents.
+  it.each([
+    ["unset", {}],
+    ["empty", { AUDIT_SALT: "   " }],
+    ["still the public development value", { AUDIT_SALT: DEV_AUDIT_SALT }],
+    ["too short to be a salt", { AUDIT_SALT: "abc123" }],
+  ])("reports %s as a problem", (_label, env) => {
+    expect(auditSaltProblem(env as NodeJS.ProcessEnv)).not.toBeNull();
+  });
+
+  it("accepts a real 16-byte salt", () => {
+    expect(auditSaltProblem({ AUDIT_SALT: "9f2c1a4b7e8d0a3b5c6d7e8f90a1b2c3" })).toBeNull();
+  });
+
+  it("the fallback is never silently usable — it is named and public", () => {
+    // If someone deletes the guard, this test still fails the moment the
+    // constant is treated as acceptable.
+    expect(auditSaltProblem({ AUDIT_SALT: DEV_AUDIT_SALT })).toMatch(/development value/i);
+  });
+
+  it("hashes are keyed, so two salts never agree on a subject", () => {
+    const did = "did:t3n:2eaed84a2d5d72c2f8a19f1a832e8d63d96a9e5a";
+    expect(hashSubject(did, "9f2c1a4b7e8d0a3b5c6d7e8f90a1b2c3")).not.toBe(
+      hashSubject(did, DEV_AUDIT_SALT),
+    );
+  });
+
+  it("is an HMAC, not a naive salt-prefixed digest", () => {
+    // `sha256(salt + ":" + value)` is the wrong primitive for a keyed hash.
+    // Asserting the construction stops a future edit quietly reverting it.
+    const salt = "9f2c1a4b7e8d0a3b5c6d7e8f90a1b2c3";
+    const subject = "did:t3n:2eaed84a2d5d72c2f8a19f1a832e8d63d96a9e5a";
+    const naive = createHash("sha256").update(`${salt}:${subject}`).digest("hex").slice(0, 32);
+    const hmac = createHmac("sha256", salt).update(subject).digest("hex").slice(0, 32);
+    expect(hashSubject(subject, salt)).toBe(hmac);
+    expect(hashSubject(subject, salt)).not.toBe(naive);
+  });
+});
+
+describe("an access request carries identifiers, not free text", () => {
+  // `resource` and `accessLevel` are copied verbatim into the append-only
+  // journal and returned by GET /api/audit, and the journal is deliberately
+  // unencrypted at rest because it "contains no personal data by construction".
+  // `resource` accepted any 120-character string, so a requester could write a
+  // name, a date of birth and a medical detail into permanent evidence — with
+  // no matching policy and no consent needed, since the record is written on
+  // the no-policy DENIED path too.
+  const valid = {
+    subjectRef: "did:t3n:2eaed84a2d5d72c2f8a19f1a832e8d63d96a9e5a",
+    subjectType: "employee",
+    accessLevel: "read",
+  };
+
+  it.each([
+    ["a sentence with personal data", "Ben Carter, DOB 1984-07-02, NHS 943-476-5919, HIV+"],
+    ["spaces", "internal wiki"],
+    ["an email address", "ben.carter@example.com"],
+    ["uppercase free text", "See Case File 12"],
+    ["a newline", "internal_wiki\nleaked: secret"],
+  ])("rejects %s as a resource", (_label, resource) => {
+    expect(AccessRequestSchema.safeParse({ ...valid, resource }).success).toBe(false);
+  });
+
+  it.each(["employee_dashboard", "internal_wiki", "production_database", "customer_pii_store"])(
+    "still accepts the real resource %s",
+    (resource) => {
+      expect(AccessRequestSchema.safeParse({ ...valid, resource }).success).toBe(true);
+    },
+  );
+
+  it("accepts an unknown but well-formed resource, so no_match_behavior still decides", () => {
+    // Fail-closed on an unrecognised resource is documented behaviour and must
+    // survive: the constraint is on shape, not on membership of a list.
+    expect(
+      AccessRequestSchema.safeParse({ ...valid, resource: "some_future_system" }).success,
+    ).toBe(true);
+  });
+
+  it("constrains accessLevel the same way", () => {
+    expect(AccessRequestSchema.safeParse({ ...valid, resource: "internal_wiki", accessLevel: "read, and note that Ben is unwell" }).success).toBe(false);
+    expect(AccessRequestSchema.safeParse({ ...valid, resource: "internal_wiki", accessLevel: "admin" }).success).toBe(true);
   });
 });

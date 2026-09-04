@@ -21,7 +21,7 @@ import express from "express";
 
 import { AuditStore, createLogger, toAppError } from "@t3n-aca/core";
 import { PolicyEngine, loadPolicyConfig } from "@t3n-aca/policy-engine";
-import { T3nConnection, loadAppConfig } from "@t3n-aca/t3n";
+import { T3nConnection, auditSaltProblem, loadAppConfig } from "@t3n-aca/t3n";
 
 import { PROJECT_ROOT, resolveFromRoot, shadowedEnvNames } from "./paths.ts";
 import { ComplianceService } from "./service.ts";
@@ -84,10 +84,30 @@ async function main(): Promise<void> {
     );
   }
 
-  if (!process.env.AUDIT_SALT?.trim()) {
-    log.warn(
-      "AUDIT_SALT is not set — using the development default. Set a unique value per deployment (see docs/OPERATIONS.md).",
-    );
+  // Fatal in live mode, a warning in demo.
+  //
+  // The journal pseudonymises subjects by hashing them under this salt, and the
+  // control rests entirely on the salt being secret. The fallback is a constant
+  // committed in this repository, so hashes produced under it are reversible:
+  // one hash per candidate DID recovers the subject, and this deployment's own
+  // documentation publishes the subject DID. Every deployment that skipped the
+  // variable also shared one salt, making their journals cross-linkable — the
+  // exact property the salt exists to prevent. A warning was the only guard,
+  // and a warning is a line of output that a running deployment sails past.
+  const saltProblem = auditSaltProblem();
+  if (saltProblem) {
+    const remediation =
+      "Generate one with: node -e \"console.log(require('crypto').randomBytes(16).toString('hex'))\" and set AUDIT_SALT in .env (see docs/OPERATIONS.md).";
+    if (config.claimSource === "live") {
+      log.error(
+        `${saltProblem}. Refusing to start in live mode: audit subjects would be pseudonymised under a value published in this repository, which makes them recoverable.`,
+        { remediation },
+      );
+      process.exit(1);
+    }
+    log.warn(`${saltProblem} — using the public development value. Demo mode only.`, {
+      remediation,
+    });
   }
 
   // --- Terminal 3 (non-fatal) --------------------------------------------

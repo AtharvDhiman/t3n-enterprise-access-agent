@@ -152,7 +152,41 @@ export class ComplianceService {
 
     // --- resolve policy and derive the minimal scope set -------------------
     const policyId = this.engine.resolvePolicyId(request);
-    const requiredScopes = policyId ? this.engine.requiredScopes(policyId) : [];
+
+    // Scopes come from the policy the RESOLVER would have chosen, never from a
+    // policy the caller named.
+    //
+    // `resolvePolicyId` honours an explicit `policyId` without checking that it
+    // is the one the resolver would pick, and several policies legitimately
+    // overlap. A vendor reading the wiki resolves to `vendor_readonly_access`
+    // (2 scopes); naming `contractor_access` on the same request — one optional
+    // body field, accepted by the schema, and `governs()` returns true — read 4.
+    // That is real over-collection of consented data, extra credit spend and
+    // extra on-network records, and it falsified the flat guarantee that "no
+    // input can widen what is read".
+    //
+    // The named policy still decides, so an operator asking "what would
+    // privileged_access say about this?" gets that answer. It simply cannot see
+    // evidence the governing policy would not have justified reading: any claim
+    // beyond that set comes back as a missing requirement, which is the truthful
+    // outcome rather than a silently wider read.
+    const resolverPolicyId = request.policyId
+      ? this.engine.resolvePolicyId({ ...request, policyId: undefined })
+      : policyId;
+    const permittedScopes = new Set(
+      resolverPolicyId ? this.engine.requiredScopes(resolverPolicyId) : [],
+    );
+    const namedScopes = policyId ? this.engine.requiredScopes(policyId) : [];
+    const requiredScopes = namedScopes.filter((scope) => permittedScopes.has(scope));
+
+    const widened = namedScopes.filter((scope) => !permittedScopes.has(scope));
+    if (widened.length > 0) {
+      this.log.warn("requested policy would read beyond what the governing policy justifies", {
+        requested: policyId,
+        governing: resolverPolicyId,
+        withheld: widened,
+      });
+    }
 
     // claimId → scope, so the source can map records back to requirements.
     const claimScopes: Record<string, string> = {};

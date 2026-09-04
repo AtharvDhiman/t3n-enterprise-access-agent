@@ -138,7 +138,7 @@ Open **Policies**.
 > load, so a typo fails at startup rather than silently disabling a control.
 >
 > No database, no container, no queue. The audit log is a file you can read with
-> `cat`. 180 tests, all offline."
+> `cat`. 204 tests, all offline."
 
 ---
 

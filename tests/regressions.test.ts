@@ -229,6 +229,24 @@ function serviceConfig(auditLogPath: string): AppConfig {
  * after construction, and a test should not be the reason that guarantee gets
  * weakened.
  */
+/** Like `serviceWithCountingSource`, but keeps the real demo source's behaviour. */
+async function serviceWithRecordingSource(dirPrefix: string): Promise<{
+  service: ComplianceService;
+  audit: AuditStore;
+}> {
+  const dir = mkdtempSync(join(tmpdir(), dirPrefix));
+  const path = join(dir, "audit.jsonl");
+  const audit = new AuditStore(path);
+  await audit.init();
+  const service = new ComplianceService({
+    config: serviceConfig(path),
+    engine: loadRealEngine(),
+    audit,
+    connection: null,
+  });
+  return { service, audit };
+}
+
 async function serviceWithCountingSource(dirPrefix: string): Promise<{
   service: ComplianceService;
   audit: AuditStore;
@@ -1008,5 +1026,128 @@ describe("a request no policy governs must not reach the claim source", () => {
       { now: NOW },
     );
     expect(calls()).toBe(1);
+  });
+});
+
+describe("a caller-supplied policyId must not widen what is read", () => {
+  // `resolvePolicyId` honours an explicit policyId without checking it is the
+  // one the resolver would pick, and several policies legitimately overlap. A
+  // vendor reading the wiki resolves to vendor_readonly_access (2 scopes);
+  // naming contractor_access on the same request — one optional body field the
+  // schema accepts — read 4. Real over-collection of consented data, extra
+  // credit spend, extra on-network records, and a flat contradiction of the
+  // stated guarantee that no input can widen what is read.
+  const vendorWikiRead = {
+    subjectRef: "demo:subject:carla",
+    subjectType: "vendor" as const,
+    resource: "internal_wiki",
+    accessLevel: "read" as const,
+  };
+
+  it("the two policies really do differ, so the test means something", () => {
+    const engine = loadRealEngine();
+    expect(engine.resolvePolicyId(vendorWikiRead)).toBe("vendor_readonly_access");
+    expect(engine.governs("contractor_access", vendorWikiRead)).toBe(true);
+    expect(engine.requiredScopes("contractor_access").length).toBeGreaterThan(
+      engine.requiredScopes("vendor_readonly_access").length,
+    );
+  });
+
+  it("reads only the governing policy's scopes even when a broader one is named", async () => {
+    const { service } = await serviceWithRecordingSource("t3n-widen-");
+    const { decision } = await service.evaluate(
+      { ...vendorWikiRead, policyId: "contractor_access" },
+      { now: NOW },
+    );
+
+    const engine = loadRealEngine();
+    const governing = engine.requiredScopes("vendor_readonly_access");
+    // The named policy still decides…
+    expect(decision.policy).toBe("contractor_access");
+    // …but it cannot see beyond what the governing policy justified reading.
+    expect([...decision.dataAccess.requestedScopes].sort()).toEqual([...governing].sort());
+    expect(decision.dataAccess.requestedScopes).not.toContain("compliance/contractor");
+    expect(decision.dataAccess.requestedScopes).not.toContain("compliance/legal");
+  });
+
+  it("an unqualified request is unaffected", async () => {
+    const { service } = await serviceWithRecordingSource("t3n-nowiden-");
+    const { decision } = await service.evaluate(vendorWikiRead, { now: NOW });
+    expect(decision.policy).toBe("vendor_readonly_access");
+    expect([...decision.dataAccess.requestedScopes].sort()).toEqual(
+      [...loadRealEngine().requiredScopes("vendor_readonly_access")].sort(),
+    );
+  });
+});
+
+describe("an unreadable record only casts doubt when the subject's claim is missing", () => {
+  // Marking a whole scope unread on ANY dropped record was too blunt. Scopes are
+  // shared, so an unparseable record usually belongs to somebody else — and the
+  // part naming its subject is exactly what failed to parse. On the live testnet
+  // each seeded scope holds one legacy record of an older shape, which turned a
+  // correct APPROVED into REVIEW_REQUIRED claiming the subject had withheld
+  // consent they had in fact granted. Caught by a live end-to-end check.
+  function sourceWith(entries: Array<{ subject: string } | "corrupt">) {
+    const source = new LiveT3nClaimSource({
+      agentDid: AGENT_DID,
+      orgDid: ORG_DID,
+      contractId: "tee:org-data/contracts",
+      async readerOrgData() {
+        return {
+          async dataList() {
+            return {
+              entry_ids: entries.map((_, i) => `e${i}`),
+              next_offset: null,
+              total: entries.length,
+            };
+          },
+          async dataGet({ entryId }: { entryId: string }) {
+            const entry = entries[Number(entryId.slice(1))];
+            if (entry === "corrupt") {
+              // Valid hex, decodes to JSON, but the shape is wrong — exactly
+              // the legacy records sitting in the real scopes.
+              const bad = JSON.stringify({ v: 1, claim: "identity_verified" });
+              return { payload_hex: Buffer.from(bad, "utf8").toString("hex") };
+            }
+            const record = {
+              v: 1,
+              subject: entry.subject,
+              claim: "identity_verified",
+              verified: true,
+              assurance: "high",
+              verifiedAt: daysFromNow(-30),
+              expiresAt: daysFromNow(300),
+              issuerCategory: "government",
+              evidenceRef: "vc:sha256:identity_verified",
+            };
+            return { payload_hex: Buffer.from(JSON.stringify(record), "utf8").toString("hex") };
+          },
+        };
+      },
+    } as unknown as T3nConnection);
+
+    return (
+      source as unknown as {
+        readScope(
+          orgDid: string,
+          scope: string,
+          subjectRef: string,
+        ): Promise<{ claims: unknown[]; dropped: number }>;
+      }
+    ).readScope.bind(source);
+  }
+
+  it("reads the subject's claim despite an unparseable neighbour", async () => {
+    const readScope = sourceWith(["corrupt", { subject: SUBJECT_DID }]);
+    const result = await readScope(ORG_DID, "compliance/identity", SUBJECT_DID);
+    expect(result.claims).toHaveLength(1);
+    expect(result.dropped).toBe(1);
+  });
+
+  it("reports the drop when nothing was readable for the subject", async () => {
+    const readScope = sourceWith(["corrupt", { subject: OTHER_DID }]);
+    const result = await readScope(ORG_DID, "compliance/identity", SUBJECT_DID);
+    expect(result.claims).toHaveLength(0);
+    expect(result.dropped).toBe(1);
   });
 });

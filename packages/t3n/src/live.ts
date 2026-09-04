@@ -158,19 +158,36 @@ export class LiveT3nClaimSource implements ClaimSource {
         }
         claims.push(...result.claims);
 
-        // A record that failed to decode or failed schema validation was
+        // A record that failed to decode or failed schema validation used to be
         // dropped with only a log line, so a partial read reached the engine
-        // looking complete — and the engine then stated positively that the
-        // subject has "no verified claim on record", turning what should have
-        // been a DENIED into a confident REVIEW_REQUIRED with no risk flag.
-        // Treat the scope as unread: the operator sees a degraded source
-        // rather than a fabricated absence of evidence.
+        // looking complete and the engine then asserted the subject had "no
+        // verified claim on record" — a fabricated absence of evidence.
+        //
+        // But a scope is shared: an unparseable record usually belongs to
+        // somebody else, and the part that says whose it is is precisely what
+        // failed to parse. Marking the whole scope unread on any drop was too
+        // blunt — the seeded testnet scopes each hold one legacy record of an
+        // older shape, and that turned a correct APPROVED into REVIEW_REQUIRED
+        // claiming the subject had withheld consent they had actually granted.
+        //
+        // The honest rule is narrower: a drop only casts doubt when the scope
+        // yielded nothing for this subject, because then the record we could
+        // not read might have been theirs. If we did read their claim, the
+        // answer is not in question.
         if (result.dropped > 0) {
-          this.log.warn("scope contained records that could not be read", {
-            scope,
-            dropped: result.dropped,
-          });
-          unreadable.push(scope);
+          if (result.claims.length === 0) {
+            this.log.warn("scope yielded no readable claim for this subject", {
+              scope,
+              dropped: result.dropped,
+            });
+            unreadable.push(scope);
+          } else {
+            this.log.info("skipped unreadable records belonging to other subjects", {
+              scope,
+              dropped: result.dropped,
+              readForSubject: result.claims.length,
+            });
+          }
         }
       } catch (err) {
         // A scope that consent covers but the platform still refuses is a real

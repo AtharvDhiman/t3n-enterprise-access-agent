@@ -138,12 +138,42 @@ export interface AccessRequest {
   readonly justification?: string;
 }
 
+/**
+ * A lowercase slug: letters, digits, and `_ - .` separators. 1-120 characters.
+ *
+ * Wide enough for every resource and access level this system uses or is likely
+ * to grow, narrow enough that no sentence, name or free-text note fits.
+ */
+const IDENTIFIER = z
+  .string()
+  .min(1)
+  .max(120)
+  .regex(
+    /^[a-z0-9][a-z0-9_.-]*$/,
+    "must be a lowercase identifier (letters, digits, underscore, dot or hyphen) — not free text",
+  );
+
 export const AccessRequestSchema = z.object({
   subjectRef: z.string().min(1).max(256),
   subjectLabel: z.string().max(120).optional(),
   subjectType: z.enum(SUBJECT_TYPES),
-  resource: z.string().min(1).max(120),
-  accessLevel: z.string().min(1).max(60),
+  // Identifiers, not free text.
+  //
+  // These two fields are copied verbatim into the append-only audit journal and
+  // returned by `GET /api/audit`, and the journal is deliberately unencrypted at
+  // rest on the stated grounds that it "contains no personal data by
+  // construction". There was no such construction: `resource` accepted any
+  // 120-character string, so a requester could write a name, a date of birth and
+  // a medical detail straight into permanent, unencrypted, append-only
+  // evidence — and it did not even need a matching policy or any consent, since
+  // the record is written on the no-policy DENIED path too.
+  //
+  // Constraining the shape rather than checking membership of the configured
+  // resource list is deliberate: an unknown resource must still reach the engine
+  // so `no_match_behavior` decides it, which is the documented fail-closed
+  // behaviour. A slug cannot carry a sentence.
+  resource: IDENTIFIER,
+  accessLevel: IDENTIFIER,
   policyId: z.string().min(1).max(120).optional(),
   justification: z.string().max(2000).optional(),
 });
