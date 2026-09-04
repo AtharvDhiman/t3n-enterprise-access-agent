@@ -109,6 +109,11 @@ export class ComplianceService {
     }
   }
 
+  /** Whether a decision could be recorded right now. Backs `GET /api/health`. */
+  async auditWritable(): Promise<{ writable: boolean; reason: string | null }> {
+    return this.audit.writable();
+  }
+
   t3nStatus(): T3nStatus {
     if (!this.connection) {
       return unconfiguredStatus(this.config.t3nConfigError, this.config.t3nWarnings);

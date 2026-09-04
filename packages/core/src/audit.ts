@@ -13,8 +13,8 @@
  *   - no justification free-text
  */
 
-import { appendFile, mkdir, readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { access, appendFile, mkdir, readFile } from "node:fs/promises";
+import { constants, existsSync } from "node:fs";
 import { dirname } from "node:path";
 
 import type { AuditRecord, Decision, SubjectType } from "./types.ts";
@@ -108,6 +108,34 @@ export class AuditStore {
   /** Whether the journal was found damaged and repaired on load. */
   get wasRepaired(): boolean {
     return this.corruptionRepaired;
+  }
+
+  /**
+   * Whether a decision could actually be recorded right now.
+   *
+   * Read separately from `append` because the failure this catches is silent:
+   * `init()` only ever reads, so a journal on a read-only mount, or under a
+   * path the process cannot create, loads perfectly and the service reports
+   * itself healthy — right up until the first decision, which then 500s, as
+   * does every one after it. Probing the directory (not the file, which may
+   * legitimately not exist yet) is what makes that visible before it bites.
+   */
+  async writable(): Promise<{ writable: boolean; reason: string | null }> {
+    const dir = dirname(this.path);
+    try {
+      await mkdir(dir, { recursive: true });
+      await access(dir, constants.W_OK);
+      if (existsSync(this.path)) await access(this.path, constants.W_OK);
+      return { writable: true, reason: null };
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      return {
+        writable: false,
+        // The path is operator-facing configuration, not user data, and naming
+        // it is the difference between a usable alert and a mystery.
+        reason: `the audit journal at ${this.path} is not writable${code ? ` (${code})` : ""}`,
+      };
+    }
   }
 
   async append(record: AuditRecord): Promise<void> {

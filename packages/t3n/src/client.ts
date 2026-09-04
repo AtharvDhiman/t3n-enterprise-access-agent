@@ -126,6 +126,8 @@ export class T3nConnection {
    * withheld consent.
    */
   private confirmedAgentDid: string | null = null;
+  /** In-flight re-authentication, so a session-expiry storm produces one. */
+  private reconnecting: Promise<void> | null = null;
   private tenantBalance: string | null = null;
   private agentBalance: string | null = null;
   /** Raw spendable base units for the agent; the enforcement decision reads this. */
@@ -191,10 +193,15 @@ export class T3nConnection {
   async connect(): Promise<void> {
     if (this.state === "connected") return;
     if (this.inflight) return this.inflight;
-    this.inflight = this.doConnect().finally(() => {
-      this.inflight = null;
+    const attempt: Promise<void> = this.doConnect().finally(() => {
+      // Only retire the slot if it is still ours. An unconditional
+      // `this.inflight = null` here let an older, slower attempt clear a slot
+      // that a newer one had since taken, so the next caller saw an empty slot
+      // and started a third connect while the second was still running.
+      if (this.inflight === attempt) this.inflight = null;
     });
-    return this.inflight;
+    this.inflight = attempt;
+    return attempt;
   }
 
   /**
@@ -203,6 +210,9 @@ export class T3nConnection {
    * Clearing `inflight` matters: a reset during an in-progress connect would
    * otherwise leave the stale promise in place, and the next caller would await
    * a connection attempt for sessions that have already been discarded.
+   *
+   * That is also why `reconnectAfterExpiry` must not call this directly on
+   * every caller — see the note there.
    */
   reset(reason?: string): void {
     this.tenantSession = null;
@@ -231,8 +241,25 @@ export class T3nConnection {
    * healthy. Callers use this to retry a read exactly once.
    */
   async reconnectAfterExpiry(): Promise<void> {
-    this.reset("session expired; re-authenticating");
-    await this.connect();
+    // Coalesce. A session TTL expires for every in-flight request at once, and
+    // each one lands here. Because `reset()` clears `inflight` as well as the
+    // cached sessions, N concurrent callers each cleared the slot the previous
+    // one had just filled and then started their own full re-authentication:
+    // N trust-manifest fetches, N handshakes, N authenticate round trips, and
+    // N-1 orphaned sessions left open on the node. Worse, a slow loser's catch
+    // stamps state="error" and mode="UNAVAILABLE" over a connection a sibling
+    // had already brought up, briefly downgrading enforcement for everyone.
+    //
+    // The first caller through does the reset and the reconnect; everyone else
+    // waits on that same attempt, which is what they wanted anyway.
+    if (this.reconnecting) return this.reconnecting;
+    this.reconnecting = (async () => {
+      this.reset("session expired; re-authenticating");
+      await this.connect();
+    })().finally(() => {
+      this.reconnecting = null;
+    });
+    return this.reconnecting;
   }
 
   private async doConnect(): Promise<void> {

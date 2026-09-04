@@ -80,10 +80,29 @@ export function createApiRouter(
   const router = Router();
 
   // --- health ------------------------------------------------------------
+  //
+  // Checks the one dependency that makes the service useful rather than merely
+  // alive. `{ok: true}` used to be unconditional, so a deployment whose audit
+  // journal was not writable — a wrong AUDIT_LOG_PATH, a read-only mount, a
+  // directory owned by another user — passed the documented liveness probe
+  // while every POST /api/requests returned 500. A decision that cannot be
+  // recorded must not be made, so an unwritable journal is a total outage, and
+  // the check that is supposed to page an operator reported it as healthy.
   router.get(
     "/health",
     handle(async (_req, res) => {
-      res.json({ ok: true, uptimeSeconds: Math.round(process.uptime()) });
+      const audit = await service.auditWritable();
+      const body = {
+        ok: audit.writable,
+        uptimeSeconds: Math.round(process.uptime()),
+        checks: {
+          auditJournal: audit.writable
+            ? { ok: true }
+            : { ok: false, detail: audit.reason },
+        },
+      };
+      // 503, not 200: a monitor that only looks at the status code must see it.
+      res.status(audit.writable ? 200 : 503).json(body);
     }),
   );
 

@@ -85,6 +85,29 @@ export function NewRequest() {
     return { resourceOptions: [...all].sort(), levelOptions: [...levels].sort() };
   }, [policies, policyId]);
 
+  /**
+   * Keep the selected resource and level inside the options actually offered.
+   *
+   * Choosing a policy narrows both lists. A controlled `<select>` whose value
+   * matches none of its options does NOT go blank: React falls through to
+   * selecting the first option, and it does so in the commit phase, so no
+   * change event fires and the state can never catch up. The dropdown then
+   * displayed `production_database` while `resource` was still
+   * `employee_dashboard`, and Evaluate posted the value that was never on
+   * screen — spending a live Terminal 3 claim read and writing a permanent
+   * audit row for a resource the operator did not choose. In a tool whose
+   * whole claim is a trustworthy audit trail, that is the worst possible
+   * place for a silent mismatch.
+   */
+  useEffect(() => {
+    if (resourceOptions.length > 0 && !resourceOptions.includes(resource)) {
+      setResource(resourceOptions[0] ?? "");
+    }
+    if (levelOptions.length > 0 && !levelOptions.includes(accessLevel)) {
+      setAccessLevel(levelOptions[0] ?? "");
+    }
+  }, [resourceOptions, levelOptions, resource, accessLevel]);
+
   function loadScenario(s: DemoScenario) {
     setSubjectRef(s.subjectRef);
     setSubjectLabel(s.subjectLabel);

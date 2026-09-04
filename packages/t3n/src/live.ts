@@ -49,8 +49,22 @@ import {
 /** Functions a claim read needs. Verified against the deployed contract. */
 const READ_FUNCTIONS = ["org-data-get", "org-data-list"] as const;
 
-/** Entries scanned per scope. A claim scope holds one record per claim type. */
-const MAX_ENTRIES_PER_SCOPE = 50;
+/** Entries fetched per `dataList` call. */
+const PAGE_SIZE = 50;
+
+/**
+ * Hard ceiling on entries scanned per scope, across all pages.
+ *
+ * A bound is necessary — an unbounded walk of a large shared scope would hang a
+ * request. But a bound that is reached must never be reported as a complete
+ * read, which is what the single un-paged `dataList(limit: 50)` call did: a
+ * scope holding one record per claim type per subject silently stopped at the
+ * 50th entry, so from the 51st subject onwards a fully consented, perfectly
+ * valid claim was never read and the ClaimSet still said `consentVerified:
+ * true` with no risk flag. The engine then stated positively that the subject
+ * had no such evidence.
+ */
+const MAX_ENTRIES_PER_SCOPE = 1000;
 
 /** Live subjects are Terminal 3 DIDs. Demo fixture ids are not. */
 const SUBJECT_DID_RE = /^did:t3n:[0-9a-f]{40}$/i;
@@ -263,17 +277,46 @@ export class LiveT3nClaimSource implements ClaimSource {
     return granted;
   }
 
-  /** Read, validate, and subject-filter every claim record in one scope. */
+  /**
+   * Read, validate, and subject-filter every claim record in one scope.
+   *
+   * Pages through the whole scope. `dataList` returns one page plus a
+   * `next_offset`; ignoring it capped every read at the first 50 entries with
+   * nothing anywhere saying so. Throws if the ceiling is reached, which the
+   * caller turns into a degraded read rather than a confident answer — an
+   * incomplete read must not be able to masquerade as an absence of evidence.
+   */
   private async readScope(
     orgDid: string,
     scope: string,
     subjectRef: string,
   ): Promise<Claim[]> {
     const org = await this.connection.readerOrgData();
-    const listing = await org.dataList({ orgDid, scope, limit: MAX_ENTRIES_PER_SCOPE });
+
+    const entryIds: string[] = [];
+    let offset = 0;
+    for (;;) {
+      const listing = await org.dataList({ orgDid, scope, offset, limit: PAGE_SIZE });
+      entryIds.push(...listing.entry_ids);
+
+      if (listing.next_offset === null) break;
+      if (entryIds.length >= MAX_ENTRIES_PER_SCOPE) {
+        throw new ClaimSourceUnavailableError(
+          `scope "${scope}" holds more than ${MAX_ENTRIES_PER_SCOPE} entries`,
+          {
+            publicMessage: "A consented scope was too large to read completely.",
+            remediation:
+              "Split the scope, or raise MAX_ENTRIES_PER_SCOPE. The decision was not made on a partial read.",
+          },
+        );
+      }
+      // A page that advances nothing would spin forever; treat it as the end.
+      if (listing.entry_ids.length === 0 || listing.next_offset <= offset) break;
+      offset = listing.next_offset;
+    }
 
     const claims: Claim[] = [];
-    for (const entryId of listing.entry_ids) {
+    for (const entryId of entryIds) {
       const entry = await org.dataGet({ orgDid, scope, entryId });
       let decoded: unknown;
       try {

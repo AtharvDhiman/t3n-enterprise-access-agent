@@ -112,7 +112,19 @@ export class ComplianceAgent {
         turn = await conversation.next();
       } catch (err) {
         if (err instanceof LlmProviderError) {
-          throw new LlmUnavailableError(err.message, { cause: err });
+          // A provider that is configured but failed is a different situation
+          // from one that was never configured, and the default remediation on
+          // LlmUnavailableError describes only the latter. Relaying it for a
+          // 429, a 500 or a timeout told the user to go and set an API key that
+          // is already set, and hid the real cause. The provider's own messages
+          // are already sanitised — status code only, never the response body —
+          // so they are safe to show.
+          throw new LlmUnavailableError(err.message, {
+            cause: err,
+            publicMessage: err.message,
+            remediation:
+              "The model backend is configured but did not answer. Try again in a moment; if it persists, check the provider's quota and status. Every other feature keeps working without it.",
+          });
         }
         throw new LlmUnavailableError(err instanceof Error ? err.message : String(err), {
           cause: err,

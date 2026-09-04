@@ -16,10 +16,10 @@ import { AuditStore, type AuditRecord } from "@t3n-aca/core";
 import { validatePolicyConfig } from "@t3n-aca/policy-engine";
 import {
   LiveT3nClaimSource,
+  T3nConnection,
   emptyClaimSet,
   type AppConfig,
   type ClaimSource,
-  type T3nConnection,
 } from "@t3n-aca/t3n";
 
 import { ComplianceService } from "../apps/server/src/service";
@@ -27,6 +27,8 @@ import { NOW, claim, claimSet, daysFromNow, loadRealEngine, request } from "./he
 
 const AGENT_DID = "did:t3n:befa498bb1b2c3d4e5f60718293a4b5c6d7e8e66";
 const ORG_DID = "did:t3n:bc00034f1122334455667788990011223344a367";
+const SUBJECT_DID = "did:t3n:2eaed84a2d5d72c2f8a19f1a832e8d63d96a9e5a";
+const OTHER_DID = "did:t3n:1111111111111111111111111111111111111111";
 
 const engine = loadRealEngine();
 const EMPLOYEE_SCOPES = ["compliance/employment", "compliance/identity"];
@@ -396,5 +398,221 @@ describe("an unknown agent identity is a failure, not an empty grant set", () =>
     ).readGrantedScopes.bind(source);
 
     expect([...(await readGrantedScopes(ORG_DID))]).toEqual(["compliance/identity"]);
+  });
+});
+
+describe("a session-expiry storm must produce one re-authentication, not one per request", () => {
+  // A T3N session TTL elapses for every in-flight request at once, and each one
+  // calls reconnectAfterExpiry(). Because reset() clears `inflight` along with
+  // the cached sessions, each caller cleared the slot the previous one had just
+  // filled and started its own full re-auth: N trust-manifest fetches, N
+  // handshakes, N authenticates, and N-1 orphaned sessions on the node. A slow
+  // loser's failure path then stamped state="error"/mode="UNAVAILABLE" over a
+  // connection a sibling had already brought up.
+  function connectionWithCountingConnect(delayMs: number) {
+    const conn = Object.create(T3nConnection.prototype) as T3nConnection;
+    const self = conn as unknown as Record<string, unknown>;
+    self.config = { environment: "testnet", contractId: "tee:org-data/contracts" };
+    self.log = { info() {}, warn() {}, error() {}, child: () => self.log };
+    self.inflight = null;
+    self.reconnecting = null;
+    self.state = "disconnected";
+    self.tenantSession = null;
+    self.agentSession = null;
+    self.mode = "UNAVAILABLE";
+
+    let calls = 0;
+    self.doConnect = async () => {
+      calls++;
+      (self as { state: string }).state = "connecting";
+      await new Promise((r) => setTimeout(r, delayMs));
+      (self as { state: string }).state = "connected";
+      (self as { tenantSession: unknown }).tenantSession = { did: "did:t3n:tenant" };
+    };
+    return { conn, calls: () => calls };
+  }
+
+  it("coalesces concurrent reconnects into a single attempt", async () => {
+    const { conn, calls } = connectionWithCountingConnect(40);
+
+    await conn.connect();
+    expect(calls()).toBe(1);
+
+    // Five requests all discover the expired session at the same moment.
+    await Promise.all([
+      conn.reconnectAfterExpiry(),
+      conn.reconnectAfterExpiry(),
+      conn.reconnectAfterExpiry(),
+      conn.reconnectAfterExpiry(),
+      conn.reconnectAfterExpiry(),
+    ]);
+
+    // One re-authentication, not five.
+    expect(calls()).toBe(2);
+    expect(conn.isConnected()).toBe(true);
+  });
+
+  it("still reconnects again when the session expires a second time", async () => {
+    const { conn, calls } = connectionWithCountingConnect(10);
+    await conn.connect();
+    await conn.reconnectAfterExpiry();
+    await conn.reconnectAfterExpiry();
+    // Coalescing must not latch: three distinct expiry events, three connects.
+    expect(calls()).toBe(3);
+  });
+
+  it("does not let a finished attempt retire a newer attempt's slot", async () => {
+    const { conn } = connectionWithCountingConnect(20);
+    const self = conn as unknown as { inflight: Promise<void> | null };
+
+    const first = conn.connect();
+    conn.reset("forced");
+    const second = conn.connect();
+    const slotDuringSecond = self.inflight;
+
+    await first;
+    // `first` settling must leave `second`'s slot alone — clearing it let the
+    // next caller start a third connect while the second was still running.
+    expect(self.inflight).toBe(slotDuringSecond);
+    await second;
+    expect(self.inflight).toBeNull();
+  });
+});
+
+describe("a journal that cannot be written must not report itself healthy", () => {
+  // `init()` only ever reads, so a journal on a read-only mount or under a path
+  // the process cannot create loaded perfectly and `GET /api/health` returned
+  // `{ok: true}` — while every POST /api/requests returned 500, because a
+  // decision that cannot be recorded is not made. The documented liveness probe
+  // reported a total outage as healthy.
+  it("reports a usable path as writable", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "t3n-writable-"));
+    const store = new AuditStore(join(dir, "nested", "audit.jsonl"));
+    const result = await store.writable();
+    expect(result).toEqual({ writable: true, reason: null });
+  });
+
+  it("reports an unusable path as not writable, and names it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "t3n-unwritable-"));
+    // A file where a directory is required: creating the parent fails with
+    // ENOTDIR on every platform, unlike permission bits which Windows ignores.
+    const blocker = join(dir, "blocker");
+    writeFileSync(blocker, "not a directory", "utf8");
+    const path = join(blocker, "sub", "audit.jsonl");
+
+    const store = new AuditStore(path);
+    const result = await store.writable();
+
+    expect(result.writable).toBe(false);
+    expect(result.reason).toContain(path);
+
+    // And the thing the health check exists to predict: appending really does
+    // fail on this path, so `writable: false` is not a false alarm.
+    await expect(
+      store.append({
+        auditId: "aud_x",
+        timestamp: NOW.toISOString(),
+        agentId: "t3n-aca",
+        requestType: "access_request",
+        policyId: "employee_access",
+        policyVersion: "1.0.0",
+        decision: "DENIED",
+        subjectHash: "0".repeat(64),
+        subjectType: "employee",
+        resource: "internal_wiki",
+        accessLevel: "read",
+        claimSource: "DEMO_FIXTURE",
+        scopesRequested: [],
+        scopesAuthorized: [],
+        claimsUsed: [],
+        missingRequirements: [],
+        riskFlags: [],
+        nextAction: "none",
+        actor: "test",
+      }),
+    ).rejects.toThrow();
+  });
+});
+
+describe("a scope read must page, and must never pass off a truncated read as complete", () => {
+  // `dataList` returns one page plus a `next_offset`. Both `next_offset` and
+  // `total` were ignored, so every scope read stopped at the first 50 entries
+  // with nothing anywhere saying so: from the 51st subject in a shared scope
+  // onwards, a fully consented and perfectly valid claim was never read, the
+  // ClaimSet still said consentVerified with no risk flag, and the engine
+  // stated positively that the subject had no such evidence.
+  function sourceOverPages(totalEntries: number) {
+    const PAGE = 50;
+    let listCalls = 0;
+    const entryFor = (i: number) => `entry${i}`;
+
+    const source = new LiveT3nClaimSource({
+      agentDid: AGENT_DID,
+      orgDid: ORG_DID,
+      contractId: "tee:org-data/contracts",
+      async readerOrgData() {
+        return {
+          async dataList({ offset = 0 }: { offset?: number }) {
+            listCalls++;
+            const ids: string[] = [];
+            for (let i = offset; i < Math.min(offset + PAGE, totalEntries); i++) {
+              ids.push(entryFor(i));
+            }
+            const next = offset + PAGE < totalEntries ? offset + PAGE : null;
+            return { entry_ids: ids, next_offset: next, total: totalEntries };
+          },
+          async dataGet({ entryId }: { entryId: string }) {
+            const index = Number(entryId.replace("entry", ""));
+            const record = {
+              v: 1,
+              // Only the last entry belongs to our subject — so if the read
+              // stops early, the claim is silently missed.
+              subject: index === totalEntries - 1 ? SUBJECT_DID : OTHER_DID,
+              claim: "identity_verified",
+              verified: true,
+              assurance: "high",
+              verifiedAt: daysFromNow(-30),
+              expiresAt: daysFromNow(300),
+              issuerCategory: "government",
+              evidenceRef: "vc:sha256:identity_verified",
+            };
+            return {
+              payload_hex: Buffer.from(JSON.stringify(record), "utf8").toString("hex"),
+            };
+          },
+        };
+      },
+    } as unknown as T3nConnection);
+
+    const readScope = (
+      source as unknown as {
+        readScope(orgDid: string, scope: string, subjectRef: string): Promise<unknown[]>;
+      }
+    ).readScope.bind(source);
+
+    return { readScope, listCalls: () => listCalls };
+  }
+
+  it("reads past the first page to find a claim at entry 120", async () => {
+    const { readScope, listCalls } = sourceOverPages(121);
+    const claims = await readScope(ORG_DID, "compliance/identity", SUBJECT_DID);
+    // Three pages: 0-49, 50-99, 100-120.
+    expect(listCalls()).toBe(3);
+    expect(claims).toHaveLength(1);
+  });
+
+  it("still stops after one page when the scope fits in one", async () => {
+    const { readScope, listCalls } = sourceOverPages(12);
+    await readScope(ORG_DID, "compliance/identity", SUBJECT_DID);
+    expect(listCalls()).toBe(1);
+  });
+
+  it("refuses rather than returning a partial read when the ceiling is hit", async () => {
+    const { readScope } = sourceOverPages(5000);
+    // Failing here is the point: the caller turns this into a degraded scope,
+    // so a truncated read can never be mistaken for an absence of evidence.
+    await expect(readScope(ORG_DID, "compliance/identity", SUBJECT_DID)).rejects.toThrow(
+      /too large|more than/i,
+    );
   });
 });
