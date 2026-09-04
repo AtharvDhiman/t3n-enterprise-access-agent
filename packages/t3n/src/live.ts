@@ -148,15 +148,30 @@ export class LiveT3nClaimSource implements ClaimSource {
 
     for (const scope of authorizedScopes) {
       try {
-        let scopeClaims: Claim[];
+        let result: { claims: Claim[]; dropped: number };
         try {
-          scopeClaims = await this.readScope(orgDid, scope, subjectRef);
+          result = await this.readScope(orgDid, scope, subjectRef);
         } catch (err) {
           if (!(err instanceof SessionExpiredError)) throw err;
           await this.connection.reconnectAfterExpiry();
-          scopeClaims = await this.readScope(orgDid, scope, subjectRef);
+          result = await this.readScope(orgDid, scope, subjectRef);
         }
-        claims.push(...scopeClaims);
+        claims.push(...result.claims);
+
+        // A record that failed to decode or failed schema validation was
+        // dropped with only a log line, so a partial read reached the engine
+        // looking complete — and the engine then stated positively that the
+        // subject has "no verified claim on record", turning what should have
+        // been a DENIED into a confident REVIEW_REQUIRED with no risk flag.
+        // Treat the scope as unread: the operator sees a degraded source
+        // rather than a fabricated absence of evidence.
+        if (result.dropped > 0) {
+          this.log.warn("scope contained records that could not be read", {
+            scope,
+            dropped: result.dropped,
+          });
+          unreadable.push(scope);
+        }
       } catch (err) {
         // A scope that consent covers but the platform still refuses is a real
         // signal, not something to swallow: treat it as not authorized.
@@ -290,7 +305,7 @@ export class LiveT3nClaimSource implements ClaimSource {
     orgDid: string,
     scope: string,
     subjectRef: string,
-  ): Promise<Claim[]> {
+  ): Promise<{ claims: Claim[]; dropped: number }> {
     const org = await this.connection.readerOrgData();
 
     const entryIds: string[] = [];
@@ -316,6 +331,11 @@ export class LiveT3nClaimSource implements ClaimSource {
     }
 
     const claims: Claim[] = [];
+    // A record we could not read might be the one for this subject — we cannot
+    // know, because the part that says whose it is failed to decode. Counting
+    // them lets the caller mark the scope as incompletely read instead of
+    // returning a short list that looks like a complete one.
+    let dropped = 0;
     for (const entryId of entryIds) {
       const entry = await org.dataGet({ orgDid, scope, entryId });
       let decoded: unknown;
@@ -323,6 +343,7 @@ export class LiveT3nClaimSource implements ClaimSource {
         decoded = decodePayloadHex(entry.payload_hex);
       } catch {
         this.log.warn("claim record is not decodable; skipping", { scope, entryId });
+        dropped++;
         continue;
       }
       const parsed = ClaimRecordSchema.safeParse(decoded);
@@ -334,6 +355,7 @@ export class LiveT3nClaimSource implements ClaimSource {
           entryId,
           issues: parsed.error.issues.map((i) => i.message),
         });
+        dropped++;
         continue;
       }
       // A scope may hold records for several subjects; only the one under
@@ -343,6 +365,6 @@ export class LiveT3nClaimSource implements ClaimSource {
 
       claims.push(claimRecordToClaim(parsed.data));
     }
-    return claims;
+    return { claims, dropped };
   }
 }

@@ -106,9 +106,12 @@ class OpenAiConversation implements LlmConversation {
           : "could not reach the language model",
         { cause: err },
       );
-    } finally {
-      clearTimeout(timer);
     }
+    // NOTE: the timer is deliberately NOT cleared here. `fetch` resolves as
+    // soon as the headers arrive, so clearing it at this point left the body
+    // read completely unbounded — a provider that sent headers and then stalled
+    // held the request open indefinitely, and REQUEST_TIMEOUT_MS bounded
+    // nothing that mattered. It is cleared after the body has been consumed.
 
     if (!response.ok) {
       // Read the status only. The body can echo back the prompt — which may
@@ -130,9 +133,14 @@ class OpenAiConversation implements LlmConversation {
     try {
       body = (await response.json()) as typeof body;
     } catch (err) {
-      throw new LlmProviderError("the language model returned an unreadable response", {
-        cause: err,
-      });
+      throw new LlmProviderError(
+        controller.signal.aborted
+          ? "the language model did not finish responding in time"
+          : "the language model returned an unreadable response",
+        { cause: err },
+      );
+    } finally {
+      clearTimeout(timer);
     }
 
     const message = body.choices?.[0]?.message;

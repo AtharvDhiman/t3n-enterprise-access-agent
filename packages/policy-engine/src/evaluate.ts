@@ -77,6 +77,18 @@ export interface PolicySummary {
   rules: EffectiveRules;
 }
 
+/**
+ * The label that keeps demo output from ever passing for live output.
+ *
+ * Defined once so every exit path uses the same flag — an early return that
+ * assembles its own list cannot silently omit it.
+ */
+const DEMO_DATA_FLAG = {
+  code: "DEMO_DATA",
+  severity: "medium" as const,
+  message: "Evaluated against local demo fixtures, not live Terminal 3 data. Not valid for a real access decision.",
+};
+
 /** Tolerance for ordinary clock skew between this host and an issuer. */
 const CLOCK_SKEW_TOLERANCE_DAYS = 1;
 
@@ -188,6 +200,26 @@ export class PolicyEngine {
    *
    * Returns `null` when nothing matches and the config says to deny.
    */
+  /**
+   * Whether a policy actually governs this request's resource and access level.
+   *
+   * `resolvePolicyId` returns an explicitly supplied `policyId` without
+   * checking it applies, and `evaluate` then denies for "out of policy scope".
+   * Exposing the check separately lets the service skip the claim lookup for a
+   * request already destined for DENIED, so a subject's DID is not sent to
+   * Terminal 3 — and a credit not spent — to answer a question that cannot
+   * change the outcome.
+   */
+  governs(policyId: string, request: AccessRequest): boolean {
+    const policy = this.config.policies[policyId];
+    if (!policy) return false;
+    return (
+      policy.applies_to_subject_types.includes(request.subjectType) &&
+      policy.resources.includes(request.resource) &&
+      policy.access_levels.includes(request.accessLevel)
+    );
+  }
+
   resolvePolicyId(request: AccessRequest): string | null {
     if (request.policyId) {
       this.getPolicy(request.policyId); // throws PolicyNotFoundError if unknown
@@ -354,12 +386,7 @@ export class PolicyEngine {
     const policy = this.getPolicy(policyId);
 
     if (claimSet.source === "DEMO_FIXTURE") {
-      flags.push({
-        code: "DEMO_DATA",
-        severity: "medium",
-        message:
-          "Evaluated against local demo fixtures, not live Terminal 3 data. Not valid for a real access decision.",
-      });
+      flags.push(DEMO_DATA_FLAG);
     }
 
     if (claimSet.unavailableReason) {
@@ -403,14 +430,27 @@ export class PolicyEngine {
 
     if (rules.flagMissingOptional) {
       for (const claimId of policy.optional_claims) {
-        const present = claimSet.claims.some((c) => c.id === claimId && c.verified);
-        if (!present) {
+        const record = claimSet.claims.find((c) => c.id === claimId);
+        if (record?.verified) continue;
+
+        // "We have no background check" and "the background check came back
+        // adverse" are opposite facts, and the second is the one a reviewer
+        // most needs. Both were reported as "is absent" — the check having
+        // FAILED was invisible to the approver and to the audit record.
+        if (record && !record.verified) {
           flags.push({
-            code: "OPTIONAL_CLAIM_ABSENT",
-            severity: "low",
-            message: `Recommended (not required) claim "${claimId}" is absent.`,
+            code: "OPTIONAL_CLAIM_FAILED",
+            severity: "medium",
+            message: `Recommended (not required) claim "${claimId}" was checked and did NOT pass.`,
           });
+          continue;
         }
+
+        flags.push({
+          code: "OPTIONAL_CLAIM_ABSENT",
+          severity: "low",
+          message: `Recommended (not required) claim "${claimId}" is absent.`,
+        });
       }
     }
 
@@ -533,6 +573,12 @@ export class PolicyEngine {
             severity: "high",
             message: envelopeViolations.join("; "),
           },
+          // This early return built its own flag list and so dropped the demo
+          // label, meaning a fixture-backed decision could reach a reviewer
+          // with nothing marking it as demo data. The guarantee that demo
+          // output never passes for live output has to hold on every path,
+          // especially the ones that skip the normal flag assembly.
+          ...(claimSet.source === "DEMO_FIXTURE" ? [DEMO_DATA_FLAG] : []),
         ],
         nextAction:
           "Correct the request, or select a policy that governs this resource and access level.",

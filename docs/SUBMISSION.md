@@ -168,8 +168,8 @@ Undocumented.
 (`required=10000000000` appears to be a balance floor, not a price).
 **BUG-6** — contract naming inconsistent between `contracts.list` and
 `getContractVersion`. **BUG-7** — the packaged npm README contradicts the docs site
-on environment names. **BUG-8** — assorted unclear behaviours that each cost real
-time.
+on environment names. **BUG-8** — `tsx watch` deadlocks `loadWasmComponent()`,
+which breaks the obvious dev-server setup.
 
 ### What worked well
 
@@ -193,7 +193,7 @@ This was treated as the primary requirement, not an afterthought.
   disable a control.
 - **No build step for the server.** Runs from TypeScript sources via `tsx`, so
   there is no compiled artefact that can drift from the source you are reading.
-- **163 tests, fully offline.** No network, no credentials — passes on a fresh
+- **170 tests, fully offline.** No network, no credentials — passes on a fresh
   clone and in CI.
 - **The audit trail is a file you can read with `cat`.**
 - **Documentation written for a stranger:** architecture, maintenance, deployment,
@@ -254,14 +254,14 @@ npm run t3n:setup            # creates org + agent, writes DIDs back to .env
 npm run t3n:seed             # claim records + consent grants
 #   set CLAIM_SOURCE=live, restart
 
-npm run verify               # typecheck + lint + 163 tests
+npm run verify               # typecheck + lint + 170 tests
 ```
 
 ## 11. Status
 
 | | |
 |---|---|
-| Tests | **163 passing**, offline, no credentials required |
+| Tests | **170 passing**, offline, no credentials required |
 | Typecheck | clean |
 | Lint | clean, zero warnings |
 | Build | 60 kB gzipped frontend |

@@ -170,10 +170,32 @@ async function main(): Promise<void> {
 
   // --- 1. writers (ACLs default to deny) ---------------------------------
   console.log(`\n${BOLD}1. Declaring scope writers${RESET}`);
+  // `setWriters` replaces a scope's whole writer list, so passing only the
+  // tenant removed any other writer the organisation had declared — another
+  // service, a second admin, an issuer writing its own claims. Read, union,
+  // write back; and as with the grant record, a failed READ must stop the
+  // write rather than be treated as "there were no other writers".
   for (const scope of ALL_SCOPES) {
+    let existingWriters: string[];
     try {
-      await org.setWriters({ orgDid, scope, writers: [tenantDid] });
-      info(`writer set on ${scope}`);
+      existingWriters = (await org.writersGet({ orgDid, scope })).writers;
+    } catch (err) {
+      fail(`could not read the writer list for ${scope}: ${err instanceof Error ? err.message : String(err)}`);
+      info("Refusing to continue: setWriters replaces the whole list, so writing without");
+      info("knowing the current one would remove every other writer on this scope.");
+      process.exit(1);
+    }
+
+    const already = existingWriters.some((w) => w.toLowerCase() === tenantDid.toLowerCase());
+    if (already && existingWriters.length > 0) {
+      info(`writer already set on ${scope} (${existingWriters.length} total)`);
+      continue;
+    }
+    const merged = [...existingWriters, tenantDid];
+    try {
+      await org.setWriters({ orgDid, scope, writers: merged });
+      const kept = merged.length - 1;
+      info(`writer set on ${scope}${kept > 0 ? ` (${kept} existing writer(s) preserved)` : ""}`);
     } catch (err) {
       warn(`setWriters failed on ${scope}: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -182,8 +204,13 @@ async function main(): Promise<void> {
 
   // --- 2. claim records ---------------------------------------------------
   console.log(`\n${BOLD}2. Writing minimized claim records${RESET}`);
-  // Deterministic per (subject, claim) so re-running updates rather than
-  // duplicating. The contract derives the entry id from this counter.
+  // The contract derives each entry id from this counter, so a re-run addresses
+  // the same entries rather than appending duplicates. It does NOT overwrite
+  // them: the contract rejects the second write with `DerivedEntryIdCollision`,
+  // which is treated as "already present" below. Re-running is therefore safe
+  // and idempotent, but it will not push edited claim values — to change a
+  // seeded record, delete the entry first. The comment here used to claim a
+  // re-run "updates", which sent anyone editing RECORDS down a dead end.
   let seq = 1000;
   const failedWrites: string[] = [];
   for (const r of RECORDS) {
@@ -291,8 +318,11 @@ async function main(): Promise<void> {
   // delegation policy, so a failed read must stop the write rather than be
   // treated as "there was nothing there".
   let existingAgents: AgentAuthEntry[];
+  let existingDiscoverDids: string[];
   try {
-    existingAgents = (await t3n.getAgentAuth()).agents;
+    const current = await t3n.getAgentAuth();
+    existingAgents = current.agents;
+    existingDiscoverDids = current.discoverDids;
   } catch (err) {
     fail(`could not read the existing delegation policy: ${err instanceof Error ? err.message : String(err)}`);
     info("Refusing to continue rather than revoking every other delegated agent.");
@@ -300,7 +330,13 @@ async function main(): Promise<void> {
   }
   const mergedAuth = mergeAgentAuthEntries(existingAgents, [ourEntry]);
   for (const row of mergedAuth.preservedRows) info(`preserved delegation: ${row}`);
-  await t3n.agentAuthUpdate({ agents: mergedAuth.agents });
+  // The document also carries `discoverDids`, the DIDs the data owner lets
+  // their agents discover. An omitted or empty list persists as empty, so
+  // writing only `agents` silently wiped it on every run.
+  if (existingDiscoverDids.length > 0) {
+    info(`preserved ${existingDiscoverDids.length} document-level discovery grant(s)`);
+  }
+  await t3n.agentAuthUpdate({ agents: mergedAuth.agents, discoverDids: existingDiscoverDids });
   ok("agent-auth delegation recorded on-network");
 
   const policy = await t3n.getAgentAuth();

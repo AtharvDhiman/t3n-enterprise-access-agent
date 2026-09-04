@@ -589,7 +589,11 @@ describe("a scope read must page, and must never pass off a truncated read as co
 
     const readScope = (
       source as unknown as {
-        readScope(orgDid: string, scope: string, subjectRef: string): Promise<unknown[]>;
+        readScope(
+          orgDid: string,
+          scope: string,
+          subjectRef: string,
+        ): Promise<{ claims: unknown[]; dropped: number }>;
       }
     ).readScope.bind(source);
 
@@ -598,10 +602,11 @@ describe("a scope read must page, and must never pass off a truncated read as co
 
   it("reads past the first page to find a claim at entry 120", async () => {
     const { readScope, listCalls } = sourceOverPages(121);
-    const claims = await readScope(ORG_DID, "compliance/identity", SUBJECT_DID);
+    const result = await readScope(ORG_DID, "compliance/identity", SUBJECT_DID);
     // Three pages: 0-49, 50-99, 100-120.
     expect(listCalls()).toBe(3);
-    expect(claims).toHaveLength(1);
+    expect(result.claims).toHaveLength(1);
+    expect(result.dropped).toBe(0);
   });
 
   it("still stops after one page when the scope fits in one", async () => {
@@ -869,5 +874,139 @@ describe("demo fixtures must not decay while the server is up", () => {
       const decision = engine.evaluate(req, claims, { auditId: "aud_demo" });
       expect(decision.decision, `scenario ${s.id}`).toBe(s.expectedDecision);
     }
+  });
+});
+
+describe("a failed optional claim is not an absent one", () => {
+  // "We have no background check" and "the background check came back adverse"
+  // are opposite facts, and the second is the one a reviewer most needs. Both
+  // were reported to the approver, and written to the audit record, as absent.
+  const PRIVILEGED_SCOPES = [
+    "compliance/background",
+    "compliance/employment",
+    "compliance/identity",
+    "compliance/training",
+  ];
+  const privileged = () =>
+    request({ subjectType: "employee", resource: "production_database", accessLevel: "admin" });
+  const core = () => [
+    claim("identity_verified"),
+    claim("employment_verified"),
+    claim("security_training"),
+  ];
+
+  it("flags a present-but-failed optional claim as failed", () => {
+    const result = ev(
+      privileged(),
+      claimSet([...core(), claim("background_check", { verified: false })], {
+        requestedScopes: PRIVILEGED_SCOPES,
+      }),
+    );
+    const codes = result.riskFlags.map((f) => f.code);
+    expect(codes).toContain("OPTIONAL_CLAIM_FAILED");
+    expect(codes).not.toContain("OPTIONAL_CLAIM_ABSENT");
+    expect(result.riskFlags.find((f) => f.code === "OPTIONAL_CLAIM_FAILED")?.message).toMatch(
+      /did NOT pass/i,
+    );
+  });
+
+  it("still flags a genuinely absent optional claim as absent", () => {
+    const result = ev(privileged(), claimSet(core(), { requestedScopes: PRIVILEGED_SCOPES }));
+    const codes = result.riskFlags.map((f) => f.code);
+    expect(codes).toContain("OPTIONAL_CLAIM_ABSENT");
+    expect(codes).not.toContain("OPTIONAL_CLAIM_FAILED");
+  });
+
+  it("raises neither when the optional claim passed", () => {
+    const result = ev(
+      privileged(),
+      claimSet([...core(), claim("background_check")], { requestedScopes: PRIVILEGED_SCOPES }),
+    );
+    const codes = result.riskFlags.map((f) => f.code);
+    expect(codes).not.toContain("OPTIONAL_CLAIM_ABSENT");
+    expect(codes).not.toContain("OPTIONAL_CLAIM_FAILED");
+  });
+});
+
+describe("demo output must never pass for live output, on any path", () => {
+  // The out-of-envelope short-circuit assembled its own risk-flag list and so
+  // dropped the demo label, letting a fixture-backed decision reach a reviewer
+  // with nothing marking it as demo data.
+  it("labels a demo decision that is denied for being out of policy scope", () => {
+    const result = ev(
+      // internal_wiki is not governed by privileged_access.
+      request({
+        subjectType: "employee",
+        resource: "internal_wiki",
+        accessLevel: "read",
+        policyId: "privileged_access",
+      }),
+      claimSet([claim("identity_verified")], {
+        source: "DEMO_FIXTURE",
+        requestedScopes: ["compliance/identity"],
+      }),
+    );
+    expect(result.decision).toBe("DENIED");
+    const codes = result.riskFlags.map((f) => f.code);
+    expect(codes).toContain("OUT_OF_POLICY_SCOPE");
+    expect(codes).toContain("DEMO_DATA");
+  });
+
+  it("does not label a live decision as demo", () => {
+    const result = ev(
+      request({
+        subjectType: "employee",
+        resource: "internal_wiki",
+        accessLevel: "read",
+        policyId: "privileged_access",
+      }),
+      claimSet([claim("identity_verified")], {
+        source: "LIVE_T3N",
+        requestedScopes: ["compliance/identity"],
+      }),
+    );
+    expect(result.riskFlags.map((f) => f.code)).not.toContain("DEMO_DATA");
+  });
+});
+
+describe("a request no policy governs must not reach the claim source", () => {
+  // `resolvePolicyId` returns an explicitly supplied policyId without checking
+  // it applies, so a request naming a policy that does not govern its resource
+  // still reached the source — a live disclosure and a credit spent for a
+  // decision the engine was always going to deny.
+  it("skips the source when the named policy does not govern the resource", async () => {
+    const { service, audit, calls } = await serviceWithCountingSource("t3n-envelope-");
+
+    const { decision } = await service.evaluate(
+      {
+        subjectRef: "demo:subject:alice",
+        subjectType: "employee",
+        resource: "internal_wiki",
+        accessLevel: "read",
+        policyId: "privileged_access",
+      },
+      { now: NOW },
+    );
+
+    expect(calls()).toBe(0);
+    expect(decision.decision).toBe("DENIED");
+    expect(decision.riskFlags.map((f) => f.code)).toContain("OUT_OF_POLICY_SCOPE");
+    // The row is still written — skipping the lookup must not skip the record.
+    expect(audit.query().total).toBe(1);
+  });
+
+  it("still calls the source when the named policy does govern it", async () => {
+    const { service, calls } = await serviceWithCountingSource("t3n-envelope-ok-");
+    await service.evaluate(
+      {
+        subjectRef: "demo:subject:alice",
+        subjectType: "employee",
+        resource: "internal_wiki",
+        accessLevel: "read",
+        policyId: "employee_access",
+      },
+      { now: NOW },
+    );
+    expect(calls()).toBe(1);
   });
 });

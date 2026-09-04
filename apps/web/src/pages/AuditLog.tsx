@@ -3,7 +3,7 @@ import { ChevronDown, Search } from "lucide-react";
 
 import { api, ApiError, type AuditRecord, type PolicySummary } from "../lib/api";
 import { Card, DecisionChip, EmptyState, ErrorNotice, SourceBadge, inputClass } from "../components/ui";
-import { formatWhen } from "../lib/format";
+import { formatExact, formatWhen } from "../lib/format";
 
 const PAGE_SIZE = 25;
 
@@ -220,6 +220,10 @@ function AuditDetail({ record }: { record: AuditRecord }) {
   return (
     <dl className="grid gap-4 text-xs sm:grid-cols-2 lg:grid-cols-4">
       <Detail label="Audit ID" value={record.auditId} mono />
+      {/* The exact instant, as stored. The table's compact form is local time
+          with no offset — fine for scanning, useless for correlating this
+          journal against another system. */}
+      <Detail label="Timestamp (UTC)" value={formatExact(record.timestamp)} mono />
       <Detail label="Agent DID" value={record.agentId} mono />
       <Detail label="Subject (salted hash)" value={record.subjectHash} mono />
       <Detail label="Triggered by" value={record.actor} />

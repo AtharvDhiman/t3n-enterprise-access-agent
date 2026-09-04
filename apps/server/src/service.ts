@@ -170,9 +170,18 @@ export class ComplianceService {
     // called, which sent the subject's DID to Terminal 3 in a delegation check:
     // a network record and a credit spend for a decision already made. Not
     // asking is both cheaper and the more honest reading of data minimization.
+    // An explicitly supplied policyId is returned by `resolvePolicyId` without
+    // checking that it applies, so a request naming a policy that does not
+    // govern its resource or access level still reached the claim source — a
+    // live disclosure and a credit spent for a decision the engine was always
+    // going to deny.
+    const governed = policyId !== null && this.engine.governs(policyId, request);
+
     let claimSet: ClaimSet;
-    if (policyId === null) {
-      this.log.info("no policy governs this request; the claim source is not consulted");
+    if (!governed) {
+      this.log.info("no policy governs this request; the claim source is not consulted", {
+        policyId,
+      });
       claimSet = {
         subjectRef: request.subjectRef,
         source: this.source.kind,

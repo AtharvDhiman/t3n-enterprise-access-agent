@@ -7,7 +7,7 @@ Built on the [Terminal 3](https://terminal3.io) Agent Developer Kit.
 Connected live to T3N testnet.
 
 [![CI](https://github.com/AtharvDhiman/t3n-enterprise-access-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/AtharvDhiman/t3n-enterprise-access-agent/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-163%20passing-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-170%20passing-brightgreen)](tests/)
 [![licence](https://img.shields.io/badge/licence-MIT-blue)](LICENSE)
 
 ---
@@ -211,7 +211,7 @@ Full detail: [docs/architecture.md](docs/architecture.md).
 - Six-screen enterprise dashboard
 - Optional natural-language layer that provably cannot decide anything — and is **not tied to one vendor**
 - Demo mode with four deterministic scenarios that can never impersonate live data
-- 163 tests covering all three decision paths, prompt injection, secret redaction, and config validation
+- 170 tests covering all three decision paths, prompt injection, secret redaction, and config validation
 
 ## Privacy model
 
@@ -295,11 +295,17 @@ npm run t3n:connect
 Expected:
 
 ```
-✓ keys present, well-formed, and distinct
+✓ tenant key present and well-formed
 ✓ environment set to "testnet"
 ✓ WASM component loaded (122 ms)
 ✓ tenant authenticated as did:t3n:…
 ```
+
+On a first run `T3N_AGENT_KEY` is still blank, so only the tenant is checked —
+that is expected, and the script says so. Once an agent has been provisioned the
+run also reports the agent identity. If both keys were claimed under the same
+Terminal 3 account they resolve to one DID; the script warns and continues,
+because the server handles that case by using the agent's opaque credential.
 
 **3. Provision the organisation and agent:**
 
@@ -348,7 +354,7 @@ Or separately: `npm run dev:server` and `npm run dev:web`.
 ## Testing
 
 ```bash
-npm test          # 163 tests
+npm test          # 170 tests
 npm run verify    # typecheck + lint + tests
 ```
 
