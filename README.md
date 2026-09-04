@@ -10,6 +10,19 @@ Connected live to T3N testnet.
 [![tests](https://img.shields.io/badge/tests-204%20passing-brightgreen)](tests/)
 [![licence](https://img.shields.io/badge/licence-MIT-blue)](LICENSE)
 
+### Try it without installing anything
+
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/AtharvDhiman/t3n-enterprise-access-agent?quickstart=1)
+
+One click gives you the real application — the same server, the same policy
+engine, the same code in this repository — running in your browser in about a
+minute. It starts in **demo mode**, which needs no Terminal 3 credentials and
+spends no credits, and the dashboard opens on its own when the port is ready.
+The four scenarios in `New request` cover every decision path.
+
+To see it against live Terminal 3 data instead, follow
+[Terminal 3 setup](#terminal-3-setup) — that needs a claim-page key.
+
 ---
 
 ## The problem

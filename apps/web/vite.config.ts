@@ -14,6 +14,14 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    // In a Codespace the dev server has to bind every interface and accept the
+    // forwarded *.app.github.dev hostname, or the port forwarder reaches a
+    // server listening only on 127.0.0.1 and Vite rejects the Host header as
+    // unrecognised. Both are gated on the CODESPACES variable so a local run is
+    // unchanged and the dev server is not exposed on the LAN.
+    ...(process.env.CODESPACES
+      ? { host: true as const, allowedHosts: [".app.github.dev"] }
+      : {}),
     proxy: {
       "/api": {
         target: process.env.API_URL || "http://localhost:8787",

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://raw.githubusercontent.com/devcontainers/spec/main/schemas/devContainer.schema.json",
+  "name": "T3N Access & Compliance Agent",
+
+  // Node 22 matches the engines field and the CI runner, so a Codespace runs
+  // the same version the tests are verified against.
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:22",
+
+  // `-n` so an existing .env is never clobbered: someone who has already put
+  // real Terminal 3 keys in must not lose them by rebuilding the container.
+  // The shipped .env.example defaults to CLAIM_SOURCE=demo, which needs no
+  // credentials and spends no credits.
+  "postCreateCommand": "cp -n .env.example .env; npm install",
+
+  // Starts the dashboard and the API together. Running it on attach rather than
+  // in postCreate means it restarts when the Codespace is resumed.
+  "postAttachCommand": { "app": "npm run dev" },
+
+  "forwardPorts": [5173, 8787],
+  "portsAttributes": {
+    "5173": { "label": "Dashboard", "onAutoForward": "openPreview" },
+    "8787": { "label": "API", "onAutoForward": "silent" }
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": ["dbaeumer.vscode-eslint", "esbenp.prettier-vscode"]
+    }
+  }
+}
