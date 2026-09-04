@@ -61,6 +61,8 @@ export class AuditStore {
   private readonly path: string;
   private records: AuditRecord[] = [];
   private loaded = false;
+  /** True when init() found and repaired a torn trailing line. */
+  private corruptionRepaired = false;
 
   constructor(path: string) {
     this.path = path;
@@ -74,6 +76,7 @@ export class AuditStore {
       return;
     }
     const raw = await readFile(this.path, "utf8");
+    let torn = false;
     this.records = raw
       .split("\n")
       .filter((l) => l.trim().length > 0)
@@ -81,12 +84,30 @@ export class AuditStore {
         try {
           return [JSON.parse(line) as AuditRecord];
         } catch {
-          // A truncated final line (power loss mid-append) must not make the
-          // whole journal unreadable.
+          // A truncated line (power loss mid-append) must not make the whole
+          // journal unreadable.
+          torn = true;
           return [];
         }
       });
+
+    // Skipping a torn line on read is not enough. If the file does not end in a
+    // newline, the next `append()` writes onto the end of that partial line and
+    // fuses the two into a single unparseable record — so one interrupted write
+    // silently destroys the *next* decision too, and that one was written
+    // successfully. Terminate the line before anything else is appended.
+    if (raw.length > 0 && !raw.endsWith("\n")) {
+      await appendFile(this.path, "\n", "utf8");
+      torn = true;
+    }
+    if (torn) this.corruptionRepaired = true;
+
     this.loaded = true;
+  }
+
+  /** Whether the journal was found damaged and repaired on load. */
+  get wasRepaired(): boolean {
+    return this.corruptionRepaired;
   }
 
   async append(record: AuditRecord): Promise<void> {

@@ -16,7 +16,7 @@ import express from "express";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { AuditStore } from "@t3n-aca/core";
-import type { AppConfig } from "@t3n-aca/t3n";
+import { T3nConnection, type AppConfig } from "@t3n-aca/t3n";
 
 import { ComplianceService } from "../apps/server/src/service";
 import { createApiRouter } from "../apps/server/src/routes/api";
@@ -210,5 +210,117 @@ describe("natural-language endpoint", () => {
     const res = await post("/agent/ask", { message: "can alice have access?" });
     expect(res.status).toBe(503);
     expect((await res.json()).error.code).toBe("LLM_UNAVAILABLE");
+  });
+});
+
+/**
+ * The leak checks above run against a service with `connection: null`, which
+ * returns `unconfiguredStatus()` — a fixed object that has never held a
+ * credential. It could not fail those assertions no matter how badly the real
+ * projection behaved, so the test that was supposed to protect the credentials
+ * was only proving that a constant contains no secrets. These run the same
+ * assertions against a *configured* connection whose config holds real-shaped
+ * secrets, which is the object that actually has something to leak.
+ */
+describe("credential projection with a configured connection", () => {
+  const TENANT_KEY = `0x${"ab".repeat(32)}`;
+  const AGENT_KEY = `0x${"cd".repeat(32)}`;
+  const AGENT_API_KEY = "t3n_key_abcdef0123456789.s3cr3tv4lu3";
+
+  let secretServer: Server;
+  let secretBase: string;
+
+  beforeAll(async () => {
+    const dir = mkdtempSync(join(tmpdir(), "t3n-api-secret-"));
+    const t3n = {
+      tenantKey: TENANT_KEY,
+      agentApiKey: AGENT_API_KEY,
+      agentDid: "did:t3n:befa498bb1b2c3d4e5f60718293a4b5c6d7e8e66",
+      agentKey: AGENT_KEY,
+      orgDid: "did:t3n:bc00034f1122334455667788990011223344a367",
+      environment: "testnet",
+      baseUrl: null,
+      contractId: "tee:org-data/contracts",
+    } as const;
+
+    const config: AppConfig = {
+      claimSource: "demo",
+      t3n,
+      t3nConfigError: null,
+      t3nWarnings: [],
+      auditLogPath: join(dir, "audit.jsonl"),
+      auditSalt: "test-salt",
+      port: 0,
+      llm: {
+        provider: "auto",
+        openaiApiKey: null,
+        openaiBaseUrl: "https://api.openai.com/v1",
+        openaiModel: "gpt-4o-mini",
+        anthropicApiKey: null,
+        anthropicBaseUrl: null,
+        anthropicModel: "claude-sonnet-4-5",
+      },
+    };
+
+    const audit = new AuditStore(config.auditLogPath);
+    await audit.init();
+    // Constructed only — never `connect()`ed, so no network is touched. The
+    // status projection is a pure read over the config and is exactly what the
+    // dashboard renders.
+    const connection = new T3nConnection(t3n);
+    const service = new ComplianceService({
+      config,
+      engine: loadRealEngine(),
+      audit,
+      connection,
+    });
+
+    const app = express();
+    app.disable("x-powered-by");
+    app.use(express.json({ limit: "128kb" }));
+    app.use("/api", createApiRouter(service, null));
+    await new Promise<void>((resolve) => {
+      secretServer = app.listen(0, () => resolve());
+    });
+    const { port } = secretServer.address() as AddressInfo;
+    secretBase = `http://127.0.0.1:${port}/api`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => secretServer.close(() => resolve()));
+  });
+
+  it("never serialises a private key or an agent credential", async () => {
+    const res = await fetch(`${secretBase}/t3n/status`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // Sanity: this is the configured projection, not the unconfigured stub.
+    expect(body.configured).toBe(true);
+    expect(body.contractId).toBe("tee:org-data/contracts");
+
+    const text = JSON.stringify(body);
+    expect(text).not.toContain(TENANT_KEY);
+    expect(text).not.toContain(AGENT_KEY);
+    expect(text).not.toContain(AGENT_API_KEY);
+    expect(text).not.toContain("s3cr3tv4lu3");
+    expect(text).not.toContain("t3n_key_");
+    expect(text).not.toMatch(/0x[0-9a-f]{64}/i);
+    expect(text).not.toMatch(/tenantKey|agentKey|agentApiKey/);
+  });
+
+  it("keeps credentials out of the dashboard payload too", async () => {
+    const text = JSON.stringify(await (await fetch(`${secretBase}/dashboard`)).json());
+    expect(text).not.toContain(TENANT_KEY);
+    expect(text).not.toContain(AGENT_API_KEY);
+    expect(text).not.toMatch(/0x[0-9a-f]{64}/i);
+  });
+
+  it("still publishes the DIDs an operator needs to verify the deployment", async () => {
+    const body = await (await fetch(`${secretBase}/t3n/status`)).json();
+    // Redaction that also hid the identities would make the status page
+    // useless — a DID is public by design and is how an operator confirms the
+    // agent is the one they provisioned.
+    expect(body.agent.did).toBe("did:t3n:befa498bb1b2c3d4e5f60718293a4b5c6d7e8e66");
+    expect(body.orgDid).toBe("did:t3n:bc00034f1122334455667788990011223344a367");
   });
 });

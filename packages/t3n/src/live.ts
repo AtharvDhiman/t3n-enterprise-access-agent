@@ -25,7 +25,7 @@
  * of those would be a quiet betrayal of the guarantee the product makes.
  */
 
-import { InvokeError, discoverCheckDelegation } from "@terminal3/t3n-sdk";
+import { InvokeError, SessionExpiredError, discoverCheckDelegation } from "@terminal3/t3n-sdk";
 
 import {
   ClaimSourceUnavailableError,
@@ -106,7 +106,17 @@ export class LiveT3nClaimSource implements ClaimSource {
     }
 
     // --- Step 2: what did consent actually cover? --------------------------
-    const grantedScopes = await this.readGrantedScopes(orgDid);
+    // Sessions expire. Retry exactly once through a fresh session rather than
+    // failing every request from here to process restart.
+    let grantedScopes: Set<string>;
+    try {
+      grantedScopes = await this.readGrantedScopes(orgDid);
+    } catch (err) {
+      if (!(err instanceof SessionExpiredError)) throw err;
+      this.log.info("T3N session expired; re-authenticating and retrying once");
+      await this.connection.reconnectAfterExpiry();
+      grantedScopes = await this.readGrantedScopes(orgDid);
+    }
 
     const authorizedScopes = requiredScopes.filter((s) => grantedScopes.has(s));
     const deniedScopes = requiredScopes.filter((s) => !grantedScopes.has(s));
@@ -124,7 +134,14 @@ export class LiveT3nClaimSource implements ClaimSource {
 
     for (const scope of authorizedScopes) {
       try {
-        const scopeClaims = await this.readScope(orgDid, scope, subjectRef);
+        let scopeClaims: Claim[];
+        try {
+          scopeClaims = await this.readScope(orgDid, scope, subjectRef);
+        } catch (err) {
+          if (!(err instanceof SessionExpiredError)) throw err;
+          await this.connection.reconnectAfterExpiry();
+          scopeClaims = await this.readScope(orgDid, scope, subjectRef);
+        }
         claims.push(...scopeClaims);
       } catch (err) {
         // A scope that consent covers but the platform still refuses is a real
@@ -214,7 +231,18 @@ export class LiveT3nClaimSource implements ClaimSource {
    */
   private async readGrantedScopes(orgDid: string): Promise<Set<string>> {
     const agentDid = this.connection.agentDid;
-    if (!agentDid) return new Set();
+    // An unknown agent identity is a configuration failure, not an answer.
+    // Returning an empty set here made it indistinguishable from "the subject
+    // granted nothing": every decision came back REVIEW_REQUIRED with every
+    // scope withheld, and the operator was told to go and ask for consent the
+    // subject had already given.
+    if (!agentDid) {
+      throw new T3nUnavailableError("the agent DID could not be determined", {
+        publicMessage: "The agent identity is not configured, so consent cannot be checked.",
+        remediation:
+          "Run `npm run t3n:setup` to provision an agent, or set T3N_AGENT_DID in .env. Check the T3N Status page for the current identity.",
+      });
+    }
 
     const org = await this.connection.tenantOrgData();
     const record = await org.grantsGet({

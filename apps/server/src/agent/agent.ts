@@ -23,7 +23,7 @@
  * never call this file.
  */
 
-import { LlmUnavailableError, createLogger, type Logger } from "@t3n-aca/core";
+import { LlmUnavailableError, createLogger, toAppError, type Logger } from "@t3n-aca/core";
 
 import { TOOL_DEFINITIONS, executeTool, type ToolContext } from "./tools.ts";
 import {
@@ -136,13 +136,25 @@ export class ComplianceAgent {
           results.push({ id: call.id, content: JSON.stringify(result), isError: false });
         } catch (err) {
           // Hand the model a safe, generic failure. Never the raw error: it can
-          // carry internal detail, and the model will repeat whatever it sees.
-          const message = err instanceof Error ? err.message : String(err);
-          this.log.warn("tool execution failed", { tool: call.name, error: message });
+          // carry internal detail — absolute paths, node URLs, upstream bodies —
+          // and the model will faithfully repeat whatever it is given straight
+          // back to the user. The comment here used to say exactly that while
+          // the code passed `err.message` through unprojected.
+          const appError = toAppError(err);
+          this.log.warn("tool execution failed", {
+            tool: call.name,
+            code: appError.code,
+            error: appError.message,
+            internal: appError.internal,
+          });
           toolsUsed.push({ name: call.name, ok: false });
           results.push({
             id: call.id,
-            content: JSON.stringify({ error: message }),
+            content: JSON.stringify({
+              error: appError.publicMessage,
+              code: appError.code,
+              ...(appError.remediation ? { remediation: appError.remediation } : {}),
+            }),
             isError: true,
           });
         }

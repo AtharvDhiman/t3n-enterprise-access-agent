@@ -115,8 +115,21 @@ export class T3nConnection {
   private tenantSession: AuthenticatedSession | null = null;
   private agentSession: AuthenticatedSession | null = null;
   private agentWhoami: { organisations: string[]; owner: string | null } | null = null;
+  /**
+   * The agent DID the network itself reports for our credential.
+   *
+   * This is authoritative. `T3N_AGENT_DID` is a convenience recorded at
+   * provisioning time and can easily be absent — `.env.example` ships it blank,
+   * and a hand-edited or restored `.env` loses it. Preferring the configured
+   * value over the confirmed one meant a blank variable silently produced a
+   * null agent DID, an empty grant set, and every live decision reported as
+   * withheld consent.
+   */
+  private confirmedAgentDid: string | null = null;
   private tenantBalance: string | null = null;
   private agentBalance: string | null = null;
+  /** Raw spendable base units for the agent; the enforcement decision reads this. */
+  private agentCredits: bigint | null = null;
   private mode: EnforcementMode = "UNAVAILABLE";
 
   private state: ConnectionState = "disconnected";
@@ -157,9 +170,18 @@ export class T3nConnection {
     return this.config.orgDid ?? this.tenantSession?.did ?? null;
   }
 
-  /** The agent's DID, as verified against the network where possible. */
+  /**
+   * The agent's DID, preferring what the network confirmed.
+   *
+   * Order matters: the DID the node returned for our own credential beats
+   * anything recorded in `.env`, which beats the session DID. Note the session
+   * DID is deliberately *last* — in `AGENT_SESSION` mode that is the
+   * `T3N_AGENT_KEY` identity, whereas grants were issued to the
+   * `createAgent`-provisioned DID, so filtering grants by the session DID would
+   * match nothing.
+   */
   get agentDid(): string | null {
-    return this.agentSession?.did ?? this.config.agentDid;
+    return this.confirmedAgentDid ?? this.config.agentDid ?? this.agentSession?.did ?? null;
   }
 
   isConnected(): boolean {
@@ -175,13 +197,42 @@ export class T3nConnection {
     return this.inflight;
   }
 
-  reset(): void {
+  /**
+   * Drop cached sessions so the next `connect()` re-authenticates.
+   *
+   * Clearing `inflight` matters: a reset during an in-progress connect would
+   * otherwise leave the stale promise in place, and the next caller would await
+   * a connection attempt for sessions that have already been discarded.
+   */
+  reset(reason?: string): void {
     this.tenantSession = null;
     this.agentSession = null;
     this.agentWhoami = null;
+    this.confirmedAgentDid = null;
+    this.agentBalance = null;
+    this.agentCredits = null;
+    this.inflight = null;
     this.state = "disconnected";
     this.connectedAt = null;
     this.mode = "UNAVAILABLE";
+    if (reason) {
+      this.lastError = reason;
+      this.log.warn("connection reset", { reason });
+    }
+  }
+
+  /**
+   * Re-authenticate after a session expires.
+   *
+   * A T3N session has a TTL. Without this, a long-running server that connected
+   * at startup failed every live request forever once that TTL elapsed:
+   * `connect()` short-circuits on `state === "connected"`, so nothing ever
+   * re-authenticated, and the status page kept reporting a dead session as
+   * healthy. Callers use this to retry a read exactly once.
+   */
+  async reconnectAfterExpiry(): Promise<void> {
+    this.reset("session expired; re-authenticating");
+    await this.connect();
   }
 
   private async doConnect(): Promise<void> {
@@ -198,7 +249,7 @@ export class T3nConnection {
       }
 
       this.tenantSession = await this.authenticateIdentity("tenant", this.config.tenantKey);
-      this.tenantBalance = await this.readBalance(this.tenantSession);
+      this.tenantBalance = (await this.readBalance(this.tenantSession))?.display ?? null;
 
       // Optional: an agent private key upgrades us to AGENT_SESSION, but only
       // if it is genuinely a different, credited identity. Anything less and we
@@ -212,7 +263,11 @@ export class T3nConnection {
             );
           } else {
             this.agentSession = session;
-            this.agentBalance = await this.readBalance(session);
+            const bal = await this.readBalance(session);
+            this.agentBalance = bal?.display ?? null;
+            // A session whose balance could not be read, or whose credit is
+            // exhausted, must not be treated as spendable.
+            this.agentCredits = bal && !bal.exhausted ? bal.available : null;
           }
         } catch (err) {
           this.log.warn("agent session authentication failed; continuing without it", {
@@ -229,10 +284,16 @@ export class T3nConnection {
             apiKey: this.config.agentApiKey,
           });
           this.agentWhoami = { organisations: who.organisations, owner: who.owner };
+          // Keep it: this is the authoritative identity for our credential.
+          this.confirmedAgentDid = who.did;
           if (this.config.agentDid && who.did !== this.config.agentDid) {
-            this.log.warn("provisioned T3N_AGENT_DID disagrees with the network", {
-              configured: this.config.agentDid,
-              actual: who.did,
+            this.log.warn(
+              "provisioned T3N_AGENT_DID disagrees with the network; using the network's value",
+              { configured: this.config.agentDid, actual: who.did },
+            );
+          } else if (!this.config.agentDid) {
+            this.log.info("T3N_AGENT_DID was not set; recovered it from the network", {
+              agentDid: shortenDid(who.did),
             });
           }
         } catch (err) {
@@ -274,7 +335,13 @@ export class T3nConnection {
    * fails on first use.
    */
   private resolveEnforcementMode(): EnforcementMode {
-    if (this.agentSession && this.agentBalance && !this.agentBalance.startsWith("0 ")) {
+    // Judge credit on the raw base units, never on the formatted string.
+    // `formatTokens(0n)` does not render as "0 " — it produces "0.000000" — so
+    // the old `startsWith("0 ")` test never matched and an uncredited agent was
+    // promoted to AGENT_SESSION, exactly the case .env.example warns about.
+    // The first metered read then failed with InsufficientCreditError while the
+    // status page claimed the strongest enforcement mode.
+    if (this.agentSession && this.agentCredits !== null && this.agentCredits > 0n) {
       return "AGENT_SESSION";
     }
     if (this.tenantSession && this.config.agentApiKey) return "DELEGATED_TENANT_READ";
@@ -282,10 +349,23 @@ export class T3nConnection {
     return "UNAVAILABLE";
   }
 
-  private async readBalance(session: AuthenticatedSession): Promise<string | null> {
+  /**
+   * Formatted balance for display, plus the raw base units for decisions.
+   *
+   * Returning both keeps `formatTokens` where it belongs — in the UI — and
+   * stops any code path from inferring "has credit" by inspecting a string.
+   */
+  private async readBalance(
+    session: AuthenticatedSession,
+  ): Promise<{ display: string; available: bigint; exhausted: boolean } | null> {
     try {
       const row = await session.client.getBalance();
-      return formatTokens(BigInt(row.available));
+      const available = BigInt(row.available);
+      return {
+        display: formatTokens(available),
+        available,
+        exhausted: Boolean(row.credit_exhausted),
+      };
     } catch {
       return null;
     }

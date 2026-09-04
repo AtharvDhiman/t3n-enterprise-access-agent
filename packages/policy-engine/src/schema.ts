@@ -142,6 +142,41 @@ export const PolicyFileSchema = z
         });
       }
     }
+
+    // Membership in `resolution.order` is not the same as reachability.
+    // `resolvePolicyId` is an ordered first-match, so a policy whose entire
+    // (subject type x resource x access level) cross-product is already covered
+    // by an earlier entry can never be selected — it is dead config that looks
+    // live. This shipped as a real defect: `vendor_readonly_access` sat below
+    // `contractor_access`, which is a superset on all three dimensions, so
+    // every vendor read resolved to the stricter contractor policy and asked
+    // for two scopes it did not need.
+    for (let i = 0; i < file.resolution.order.length; i++) {
+      const laterId = file.resolution.order[i];
+      const later = laterId ? file.policies[laterId] : undefined;
+      if (!later) continue;
+
+      for (let j = 0; j < i; j++) {
+        const earlierId = file.resolution.order[j];
+        const earlier = earlierId ? file.policies[earlierId] : undefined;
+        if (!earlier) continue;
+
+        const covers =
+          later.applies_to_subject_types.every((t) =>
+            earlier.applies_to_subject_types.includes(t),
+          ) &&
+          later.resources.every((r) => earlier.resources.includes(r)) &&
+          later.access_levels.every((l) => earlier.access_levels.includes(l));
+
+        if (covers) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["resolution", "order"],
+            message: `policy "${laterId}" is unreachable: "${earlierId}" appears earlier in \`resolution.order\` and already covers every subject type, resource and access level it declares. Move "${laterId}" above "${earlierId}" (most specific first), or narrow "${earlierId}".`,
+          });
+        }
+      }
+    }
   });
 
 export type ClaimDefinition = z.infer<typeof ClaimDefinitionSchema>;

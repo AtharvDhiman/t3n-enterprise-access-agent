@@ -250,26 +250,63 @@ export class PolicyEngine {
       };
     }
 
-    const expiry = claim.expiresAt ? new Date(claim.expiresAt) : null;
-    if (expiry && expiry.getTime() <= now.getTime()) {
-      return {
-        claimId,
-        satisfied: false,
-        reason: "expired",
-        detail: `${label}: expired on ${claim.expiresAt?.slice(0, 10)}.`,
-      };
-    }
-
-    if (claim.verifiedAt) {
-      const ageDays = (now.getTime() - new Date(claim.verifiedAt).getTime()) / MS_PER_DAY;
-      if (ageDays > rules.maxClaimAgeDays) {
+    // An unparseable date must never read as "no expiry". `new Date("nonsense")`
+    // yields NaN, and every comparison against NaN is false — so a malformed
+    // timestamp would sail through both checks below as though the claim were
+    // permanently valid. Treat it as unusable instead.
+    if (claim.expiresAt !== null) {
+      const expiryMs = new Date(claim.expiresAt).getTime();
+      if (Number.isNaN(expiryMs)) {
         return {
           claimId,
           satisfied: false,
           reason: "expired",
-          detail: `${label}: last verified ${Math.floor(ageDays)} days ago, exceeding the ${rules.maxClaimAgeDays}-day maximum for this policy.`,
+          detail: `${label}: expiry date is unreadable, so validity cannot be established.`,
         };
       }
+      if (expiryMs <= now.getTime()) {
+        return {
+          claimId,
+          satisfied: false,
+          reason: "expired",
+          detail: `${label}: expired on ${claim.expiresAt.slice(0, 10)}.`,
+        };
+      }
+    }
+
+    // A claim with no verification date cannot be shown to be fresh, and
+    // "cannot be shown" must not resolve to "is". Skipping the age check when
+    // `verifiedAt` is null made an undated claim permanently valid — it passed
+    // even under privileged_access, whose whole purpose is a tightened 180-day
+    // window with `expired_claim_behavior: deny`. Absent evidence of freshness
+    // is treated exactly like stale evidence, which is what fail-closed means.
+    if (claim.verifiedAt === null) {
+      return {
+        claimId,
+        satisfied: false,
+        reason: "expired",
+        detail: `${label}: no verification date on record, so its age cannot be checked against the ${rules.maxClaimAgeDays}-day maximum for this policy.`,
+      };
+    }
+
+    const verifiedMs = new Date(claim.verifiedAt).getTime();
+    if (Number.isNaN(verifiedMs)) {
+      return {
+        claimId,
+        satisfied: false,
+        reason: "expired",
+        detail: `${label}: verification date is unreadable, so its age cannot be checked.`,
+      };
+    }
+
+    const ageDays = (now.getTime() - verifiedMs) / MS_PER_DAY;
+    if (ageDays > rules.maxClaimAgeDays) {
+      return {
+        claimId,
+        satisfied: false,
+        reason: "expired",
+        detail: `${label}: last verified ${Math.floor(ageDays)} days ago, exceeding the ${rules.maxClaimAgeDays}-day maximum for this policy.`,
+      };
     }
 
     if (assuranceRank(claim.assurance) < assuranceRank(rules.minimumAssurance)) {

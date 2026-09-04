@@ -90,15 +90,29 @@ async function main(): Promise<void> {
 
   const envName = (process.env.T3N_ENV?.trim() || "testnet") as Environment;
   const tenantKey = requireKey("T3N_API_KEY");
-  const agentKey = requireKey("T3N_AGENT_KEY");
 
-  if (tenantKey.toLowerCase() === agentKey.toLowerCase()) {
+  // T3N_AGENT_KEY is optional — `.env.example` ships it blank and the README
+  // tells a new user to run this script FIRST, before `t3n:setup` has
+  // provisioned anything. Requiring it made the documented onboarding path fail
+  // at step one with a message about a variable the docs call optional.
+  const agentKeyRaw = process.env.T3N_AGENT_KEY?.trim() ?? "";
+  const agentKey =
+    agentKeyRaw && agentKeyRaw !== `0x${"0".repeat(64)}` ? agentKeyRaw : null;
+
+  if (agentKey && !/^0x[0-9a-fA-F]{64}$/.test(agentKey)) {
+    fail("T3N_AGENT_KEY is set but is not a valid secp256k1 key (expected 0x + 64 hex chars).");
+    process.exit(1);
+  }
+  if (agentKey && tenantKey.toLowerCase() === agentKey.toLowerCase()) {
     fail(
       "T3N_AGENT_KEY is the same as T3N_API_KEY. The agent needs its own identity and its own credits — claim a second key.",
     );
     process.exit(1);
   }
-  ok("keys present, well-formed, and distinct");
+  ok(agentKey ? "keys present, well-formed, and distinct" : "tenant key present and well-formed");
+  if (!agentKey) {
+    info("T3N_AGENT_KEY not set — checking the tenant only. That is the expected first run.");
+  }
 
   setEnvironment(envName);
   ok(`environment set to "${envName}"`);
@@ -109,29 +123,50 @@ async function main(): Promise<void> {
   ok(`WASM component loaded (${Date.now() - t0} ms)`);
 
   const tenantDid = await authenticateAs("tenant", tenantKey, envName, wasmComponent);
-  const agentDid = await authenticateAs("agent", agentKey, envName, wasmComponent);
 
-  if (tenantDid === agentDid) {
-    fail("tenant and agent resolved to the SAME DID — they must be separate identities.");
-    process.exit(1);
+  let agentDid: string | null = null;
+  if (agentKey) {
+    agentDid = await authenticateAs("agent", agentKey, envName, wasmComponent);
+    if (tenantDid === agentDid) {
+      fail(
+        "tenant and agent resolved to the SAME DID — every key claimed under one account binds to one identity. Use `npm run t3n:setup` to provision a separate agent.",
+      );
+      process.exit(1);
+    }
+    ok("tenant and agent are distinct DIDs");
   }
-  ok("tenant and agent are distinct DIDs");
 
   // Keyed, session-free read. Confirms the agent's API key works on the
   // `discover` transport the delegation check also uses.
-  try {
-    const who = await discoverWhoami({ baseUrl: getNodeUrl(), apiKey: agentKey });
-    ok(`discoverWhoami: ${who.did}`);
-    info(`organisations: ${who.organisations.length > 0 ? who.organisations.join(", ") : "(none)"}`);
-    info(`owner: ${who.owner ?? "(none)"}`);
-  } catch (err) {
-    fail(`discoverWhoami failed: ${err instanceof Error ? err.message : String(err)}`);
-    info("The session auth above still succeeded; this affects the keyed transport only.");
+  // The discover transport takes the OPAQUE `t3n_key_…` credential, relayed
+  // verbatim in an X-T3N-Api-Key header. This previously passed the raw
+  // secp256k1 private key instead — a credential-handling defect regardless of
+  // whether the call succeeded, since a private key has no business travelling
+  // in an HTTP header where an intermediary could log it.
+  const agentApiKey = process.env.T3N_AGENT_API_KEY?.trim() ?? "";
+  if (!agentApiKey) {
+    info("T3N_AGENT_API_KEY not set — skipping the keyed transport check.");
+    info("Run `npm run t3n:setup` to provision an agent identity and its credential.");
+  } else if (!/^t3n_key_/.test(agentApiKey)) {
+    fail("T3N_AGENT_API_KEY is not an opaque t3n_key_… credential; refusing to send it.");
+  } else {
+    try {
+      const who = await discoverWhoami({ baseUrl: getNodeUrl(), apiKey: agentApiKey });
+      ok(`discoverWhoami: ${who.did}`);
+      info(
+        `organisations: ${who.organisations.length > 0 ? who.organisations.join(", ") : "(none)"}`,
+      );
+      info(`owner: ${who.owner ?? "(none)"}`);
+    } catch (err) {
+      fail(`discoverWhoami failed: ${err instanceof Error ? err.message : String(err)}`);
+      info("The session auth above still succeeded; this affects the keyed transport only.");
+    }
   }
 
   console.log(`\n${GREEN}${BOLD}Connection verified.${RESET}`);
   console.log(`${DIM}Tenant DID: ${tenantDid}${RESET}`);
-  console.log(`${DIM}Agent  DID: ${agentDid}${RESET}\n`);
+  if (agentDid) console.log(`${DIM}Agent  DID: ${agentDid}${RESET}`);
+  console.log("");
 }
 
 main().catch((err: unknown) => {

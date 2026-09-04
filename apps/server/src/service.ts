@@ -160,21 +160,40 @@ export class ComplianceService {
     }
 
     // --- fetch consented claims -------------------------------------------
+    // Only when a policy actually governs the request. If none does, the engine
+    // denies outright and `requiredScopes` is empty — but the source was still
+    // called, which sent the subject's DID to Terminal 3 in a delegation check:
+    // a network record and a credit spend for a decision already made. Not
+    // asking is both cheaper and the more honest reading of data minimization.
     let claimSet: ClaimSet;
-    try {
-      claimSet = await this.source.fetchClaims({
+    if (policyId === null) {
+      this.log.info("no policy governs this request; the claim source is not consulted");
+      claimSet = {
         subjectRef: request.subjectRef,
-        requiredScopes,
-        claimScopes,
-      });
-    } catch (err) {
-      // A source failure must not be silently converted into "no claims" —
-      // that would look identical to "subject has no evidence" and could turn
-      // an outage into a stream of denials.
-      this.log.error("claim source failed", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      throw err;
+        source: this.source.kind,
+        requestedScopes: [],
+        authorizedScopes: [],
+        deniedScopes: [],
+        claims: [],
+        consentVerified: false,
+        unavailableReason: null,
+      };
+    } else {
+      try {
+        claimSet = await this.source.fetchClaims({
+          subjectRef: request.subjectRef,
+          requiredScopes,
+          claimScopes,
+        });
+      } catch (err) {
+        // A source failure must not be silently converted into "no claims" —
+        // that would look identical to "subject has no evidence" and could turn
+        // an outage into a stream of denials.
+        this.log.error("claim source failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        throw err;
+      }
     }
 
     // --- decide ------------------------------------------------------------
@@ -185,7 +204,42 @@ export class ComplianceService {
     });
 
     // --- record ------------------------------------------------------------
-    const record: AuditRecord = {
+    const record: AuditRecord = this.buildAuditRecord(
+      request,
+      claimSet,
+      decision,
+      options.actor,
+    );
+
+    await this.audit.append(record);
+
+    this.log.info("decision recorded", {
+      auditId: record.auditId,
+      decision: record.decision,
+      policy: record.policyId,
+      source: record.claimSource,
+      scopesRequested: record.scopesRequested.length,
+      scopesAuthorized: record.scopesAuthorized.length,
+    });
+
+    return { decision, audit: record };
+  }
+
+  /**
+   * Build the audit row for a decision.
+   *
+   * Extracted so every exit path — including the short-circuit for a request no
+   * policy governs — writes an identically-shaped record. A decision that
+   * skipped the audit, or wrote a differently-shaped row, would be worse than
+   * no audit at all.
+   */
+  private buildAuditRecord(
+    request: AccessRequest,
+    claimSet: ClaimSet,
+    decision: DecisionResult,
+    actor: string | undefined,
+  ): AuditRecord {
+    return {
       auditId: decision.auditId,
       timestamp: decision.timestamp,
       agentId: this.agentId,
@@ -207,21 +261,8 @@ export class ComplianceService {
       missingRequirements: decision.missingRequirements,
       riskFlags: decision.riskFlags.map((f) => f.code),
       nextAction: decision.nextAction,
-      actor: options.actor ?? "api",
+      actor: actor ?? "api",
     };
-
-    await this.audit.append(record);
-
-    this.log.info("decision recorded", {
-      auditId: record.auditId,
-      decision: record.decision,
-      policy: record.policyId,
-      source: record.claimSource,
-      scopesRequested: record.scopesRequested.length,
-      scopesAuthorized: record.scopesAuthorized.length,
-    });
-
-    return { decision, audit: record };
   }
 
   dashboard(): DashboardSummary {

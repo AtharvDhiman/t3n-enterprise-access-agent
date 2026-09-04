@@ -43,7 +43,10 @@ import {
   fetchTrustedManifest,
   getNodeUrl,
   createOrgDataClientFromSession,
+  mergeAgentAuthEntries,
+  type AgentAuthEntry,
   type Environment,
+  type UserGrant,
 } from "@terminal3/t3n-sdk";
 
 const GREEN = "\x1b[32m";
@@ -208,10 +211,30 @@ async function main(): Promise<void> {
 
   // --- 3. org grants ------------------------------------------------------
   console.log(`\n${BOLD}3. Granting the agent read access${RESET}`);
+  // `setGrants` is a full-document write: the list passed in becomes the entire
+  // grant record. Sending only this agent's row therefore *revokes* every other
+  // grantee on the contract — so re-running the seed against an org that has
+  // other agents, or a second agent provisioned later, silently deletes access
+  // nobody asked to remove. Read first, replace only our own row, write back the
+  // whole merged list.
+  let existingGrants: UserGrant[] = [];
+  try {
+    existingGrants = (await org.grantsGet({ orgDid, contractId })).grants;
+  } catch (err) {
+    // No grant record yet is the normal first-run case, not a failure.
+    info(`no existing grant record (${err instanceof Error ? err.message : String(err)})`);
+  }
+  const preservedGrants = existingGrants.filter(
+    (g) => g.user_did.toLowerCase() !== agentDid.toLowerCase(),
+  );
+  for (const g of preservedGrants) info(`preserved grant: ${g.user_did}`);
   await org.setGrants({
     orgDid,
     contractId,
-    grants: [{ user_did: agentDid, functions: READ_FUNCTIONS, scopes: GRANTED_SCOPES }],
+    grants: [
+      ...preservedGrants,
+      { user_did: agentDid, functions: READ_FUNCTIONS, scopes: GRANTED_SCOPES },
+    ],
   });
   ok(`agent granted ${GRANTED_SCOPES.length} scopes`);
   info(`granted:     ${GRANTED_SCOPES.join(", ")}`);
@@ -220,23 +243,33 @@ async function main(): Promise<void> {
 
   // --- 4. member delegation (signed by the data owner) --------------------
   console.log(`\n${BOLD}4. Recording the data owner's delegation${RESET}`);
-  await t3n.agentAuthUpdate({
-    agents: [
+  // Same full-document hazard as `setGrants` above: `agentAuthUpdate` replaces
+  // the owner's entire delegation policy, so a bare single-agent write revokes
+  // every other agent the data owner has authorised. `mergeAgentAuthEntries`
+  // leaves other agents (and other scripts on this agent) untouched and replaces
+  // only the row for this contract.
+  const ourEntry: AgentAuthEntry = {
+    agentDid,
+    scripts: [
       {
-        agentDid,
-        scripts: [
-          {
-            scriptName: contractId,
-            versionReq: null,
-            functions: READ_FUNCTIONS,
-            scopes: GRANTED_SCOPES,
-            readScopes: GRANTED_SCOPES,
-            allowedHosts: [],
-          },
-        ],
+        scriptName: contractId,
+        versionReq: null,
+        functions: READ_FUNCTIONS,
+        scopes: GRANTED_SCOPES,
+        readScopes: GRANTED_SCOPES,
+        allowedHosts: [],
       },
     ],
-  });
+  };
+  let existingAgents: AgentAuthEntry[] = [];
+  try {
+    existingAgents = (await t3n.getAgentAuth()).agents;
+  } catch (err) {
+    info(`no existing delegation policy (${err instanceof Error ? err.message : String(err)})`);
+  }
+  const mergedAuth = mergeAgentAuthEntries(existingAgents, [ourEntry]);
+  for (const row of mergedAuth.preservedRows) info(`preserved delegation: ${row}`);
+  await t3n.agentAuthUpdate({ agents: mergedAuth.agents });
   ok("agent-auth delegation recorded on-network");
 
   const policy = await t3n.getAgentAuth();

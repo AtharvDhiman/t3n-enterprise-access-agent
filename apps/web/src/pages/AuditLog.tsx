@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, Search } from "lucide-react";
 
 import { api, ApiError, type AuditRecord, type PolicySummary } from "../lib/api";
@@ -20,8 +20,16 @@ export function AuditLog() {
   const [subjectType, setSubjectType] = useState("");
   const [search, setSearch] = useState("");
 
+  // Every filter keystroke and page click starts a fetch, and responses can
+  // arrive out of order: a slow request for "eng" landing after a fast one for
+  // "engineering" repaints the stale rows under the current filter — a
+  // compliance table showing records that do not match what it says it is
+  // showing. Only the newest request is allowed to write state.
+  const requestSeq = useRef(0);
+
   const load = useCallback(
     async (nextOffset: number) => {
+      const seq = ++requestSeq.current;
       try {
         const page = await api.audit({
           decision: decision || undefined,
@@ -31,11 +39,13 @@ export function AuditLog() {
           limit: PAGE_SIZE,
           offset: nextOffset,
         });
+        if (seq !== requestSeq.current) return;
         setRecords(page.records);
         setTotal(page.total);
         setOffset(page.offset);
         setError(null);
       } catch (err) {
+        if (seq !== requestSeq.current) return;
         if (err instanceof ApiError) setError(err);
       }
     },

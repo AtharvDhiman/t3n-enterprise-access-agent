@@ -179,11 +179,16 @@ policies:
 # Evaluated top to bottom; first match wins. Deterministic by construction:
 # an ordered list, not a scoring function.
 resolution:
+  # Ordered most-specific first. A policy listed after one that already covers
+  # its whole (subject type x resource x access level) cross-product can never
+  # be reached — `vendor_readonly_access` sat below `contractor_access` and was
+  # dead config until this was corrected. The schema now rejects that shape, so
+  # a future reorder that reintroduces shadowing fails at startup.
   order:
     - privileged_access
+    - vendor_readonly_access
     - employee_access
     - contractor_access
-    - vendor_readonly_access
   # When nothing matches, deny rather than fall back to the most permissive
   # policy. Fail-closed.
   no_match_behavior: deny

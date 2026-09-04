@@ -19,7 +19,7 @@
 import dotenv from "dotenv";
 import express from "express";
 
-import { AuditStore, createLogger } from "@t3n-aca/core";
+import { AuditStore, createLogger, toAppError } from "@t3n-aca/core";
 import { PolicyEngine, loadPolicyConfig } from "@t3n-aca/policy-engine";
 import { T3nConnection, loadAppConfig } from "@t3n-aca/t3n";
 
@@ -146,6 +146,57 @@ async function main(): Promise<void> {
       },
     });
   });
+
+  // Terminal error handler.
+  //
+  // The per-route `handle()` wrapper catches anything thrown *inside* a
+  // handler, but errors raised *before* one runs — malformed JSON or an
+  // oversized body rejected by `express.json()` — bypass it entirely and hit
+  // Express's default handler, which renders an HTML page containing a stack
+  // trace and absolute filesystem paths. Sending `{"a",,}` to /api/requests
+  // disclosed the deployment's directory layout. Everything now leaves through
+  // the same safe projection as the rest of the API.
+  app.use(
+    (
+      err: unknown,
+      _req: express.Request,
+      res: express.Response,
+      _next: express.NextFunction,
+    ): void => {
+      const bodyError = err as { type?: string };
+      const appError = toAppError(err);
+
+      // Map body-parser's own failure types onto our vocabulary so a client
+      // gets an actionable reason rather than a generic 500.
+      if (bodyError?.type === "entity.parse.failed") {
+        res.status(400).json({
+          error: {
+            code: "REQUEST_INVALID",
+            message: "The request body is not valid JSON.",
+            remediation: "Send a well-formed JSON object with content-type: application/json.",
+          },
+        });
+        return;
+      }
+      if (bodyError?.type === "entity.too.large") {
+        res.status(413).json({
+          error: {
+            code: "REQUEST_INVALID",
+            message: "The request body is too large.",
+            remediation: "Requests are limited to 128 kB.",
+          },
+        });
+        return;
+      }
+
+      log.error("unhandled request error", {
+        code: appError.code,
+        message: appError.message,
+        internal: appError.internal,
+      });
+      res.status(appError.status).json(appError.toPublicJSON());
+    },
+  );
 
   app.listen(config.port, () => {
     const status = service.t3nStatus();
