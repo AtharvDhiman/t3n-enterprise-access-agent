@@ -555,7 +555,6 @@ export class PolicyEngine {
     }
 
     const requirements = policy.required_claims;
-    const requestedScopes = this.requiredScopes(policyId);
 
     if (envelopeViolations.length > 0) {
       return {

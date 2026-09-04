@@ -6,7 +6,7 @@
  * conservative redactor than to audit every call site.
  */
 
-import { createHash, createHmac, randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 
 /** Keys whose values are never logged, matched case-insensitively as substrings. */
 const SENSITIVE_KEY_PATTERNS = [

@@ -1103,7 +1103,7 @@ describe("an unreadable record only casts doubt when the subject's claim is miss
           },
           async dataGet({ entryId }: { entryId: string }) {
             const entry = entries[Number(entryId.slice(1))];
-            if (entry === "corrupt") {
+            if (entry === undefined || entry === "corrupt") {
               // Valid hex, decodes to JSON, but the shape is wrong — exactly
               // the legacy records sitting in the real scopes.
               const bad = JSON.stringify({ v: 1, claim: "identity_verified" });
