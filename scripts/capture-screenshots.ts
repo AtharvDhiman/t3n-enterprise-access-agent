@@ -48,6 +48,11 @@ async function nav(page: Page, label: string): Promise<void> {
 
 async function shot(page: Page, file: string, height: number): Promise<void> {
   await page.setViewportSize({ width: WIDTH, height });
+  // Back to the top first. Clicking "Evaluate" scrolls the result into view, so
+  // a plain viewport capture started mid-page: the heading was sliced through
+  // and the whole left navigation was missing, which made the gallery look like
+  // screenshots of a page fragment rather than of an application.
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.waitForTimeout(700);
   await page.screenshot({ path: resolve(OUT, file) });
   console.log(`  ✓ ${file}`);
