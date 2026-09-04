@@ -58,7 +58,14 @@ while building this are documented in [docs/bugs.md](docs/bugs.md).
 - **No `VITE_`-prefixed secret exists.** Anything so prefixed is public by
   definition in a Vite build.
 - Every log payload passes `redact()`, which masks values by key name and scans
-  free text for private-key-shaped strings.
+  free text for every credential shape this system actually handles: `0x`-prefixed
+  private keys, Terminal 3's opaque `t3n_key_...` agent credential, `sk-...` and
+  `AIza...` model-provider keys, and bearer tokens. Key-name matching alone is not
+  enough — a secret quoted inside an SDK error message, a URL or a header dump
+  arrives as free text, and that path once covered only the hex shape.
+- Redaction is deliberately narrow about what it will *not* touch: `did:t3n:...`
+  identifiers pass through intact. They are public by design, and an operator who
+  cannot see which agent a log line concerns cannot diagnose anything.
 - Configuration distinguishes *absent* from *placeholder* from *malformed*, so an
   unedited `.env.example` copy is reported as "not filled in" rather than
   producing a confusing auth failure.

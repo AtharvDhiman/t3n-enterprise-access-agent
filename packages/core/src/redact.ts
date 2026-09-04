@@ -68,14 +68,56 @@ export function maskSecret(value: string): string {
 }
 
 /**
- * A hex-looking string long enough to be a private key.
- * Used as a last-resort scan of free-text log messages.
+ * Credential shapes recognised inside free text.
+ *
+ * Key-based redaction only fires when a secret arrives as the *value* of a
+ * suspiciously-named field. A secret embedded in a sentence — an SDK error
+ * message, a URL in a log line, a header dump — reaches the log through
+ * `scrubText` instead, and that recognised exactly one shape: a `0x`-prefixed
+ * hex private key. It therefore missed:
+ *
+ *   - `t3n_key_…`, this project's OWN agent credential, and the one actually
+ *     relayed in an HTTP header on every delegation check
+ *   - `sk-…` (OpenAI, OpenRouter, Groq) and `AIza…` (Gemini — the provider this
+ *     deployment is configured with today)
+ *   - a bearer token in a quoted Authorization header
+ *
+ * Each pattern is anchored on a distinctive prefix rather than on "long
+ * random-looking string", because a Terminal 3 DID is 40 hex characters and is
+ * a PUBLIC identifier that the status page, the audit trail and every debug
+ * session depend on. Redacting those would break the transparency this system
+ * is built to provide, so the patterns are deliberately narrow.
  */
-const HEX_SECRET_RE = /\b0x[a-fA-F0-9]{32,}\b/g;
+const SECRET_PATTERNS: readonly RegExp[] = [
+  // Tenant / agent private key.
+  /\b0x[a-fA-F0-9]{32,}\b/g,
+  // Terminal 3 opaque agent credential: t3n_key_<keyId>.<secret>
+  /\bt3n_key_[A-Za-z0-9]+(?:\.[A-Za-z0-9_-]+)?/g,
+  // OpenAI-compatible providers.
+  /\bsk-[A-Za-z0-9_-]{16,}/g,
+  // Google / Gemini.
+  /\bAIza[A-Za-z0-9_-]{30,}/g,
+];
 
-/** Strip anything that looks like key material out of a free-text string. */
+/** `Authorization: Bearer <token>` and friends, however they are quoted. */
+const BEARER_RE = /\b(Bearer|Basic)\s+([A-Za-z0-9._~+/=-]{12,})/gi;
+
+/**
+ * Strip anything that looks like key material out of a free-text string.
+ *
+ * Deliberately conservative about what it will NOT touch: `did:t3n:<40 hex>`
+ * identifiers pass through untouched, because an operator who cannot see which
+ * agent a log line concerns cannot debug anything.
+ */
 export function scrubText(text: string): string {
-  return text.replace(HEX_SECRET_RE, (m) => maskSecret(m));
+  let out = text;
+  for (const pattern of SECRET_PATTERNS) {
+    out = out.replace(pattern, (m) => maskSecret(m));
+  }
+  return out.replace(
+    BEARER_RE,
+    (_m, scheme: string, token: string) => `${scheme} ${maskSecret(token)}`,
+  );
 }
 
 /**

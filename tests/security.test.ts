@@ -253,3 +253,58 @@ describe("the demo source cannot masquerade as live", () => {
     expect(result.unavailableReason).toBeTruthy();
   });
 });
+
+describe("free-text redaction must cover every credential shape this system handles", () => {
+  // Key-based redaction only fires when a secret is the VALUE of a
+  // suspiciously-named field. A secret embedded in a sentence — an SDK error
+  // message, a URL in a log line, a header dump — goes through scrubText, which
+  // recognised only `0x`-prefixed hex. It therefore leaked the project's own
+  // `t3n_key_…` agent credential (the one relayed in an HTTP header on every
+  // delegation check) and the configured LLM provider key.
+  const AGENT_CRED = "t3n_key_9f2c1a4b7e8d.s3cr3tPart-Th4t-Must-Never-Appear";
+  const OPENAI_KEY = "sk-proj-AbCdEf0123456789AbCdEf0123456789AbCdEf01";
+  const GEMINI_KEY = "AIzaSyD-1234567890abcdefghijklmnopqrstuv";
+  const PRIVATE_KEY = `0x${"ab".repeat(32)}`;
+
+  const leaked = (value: unknown, ...secrets: string[]): boolean => {
+    const out = JSON.stringify(redact(value));
+    return secrets.some((s) => out.includes(s));
+  };
+
+  it.each([
+    ["the Terminal 3 agent credential", `delegation check failed for ${AGENT_CRED}`, "s3cr3tPart"],
+    ["a tenant private key", `signing failed with ${PRIVATE_KEY}`, "ab".repeat(32)],
+    ["an OpenAI-compatible key", `provider rejected ${OPENAI_KEY}`, "AbCdEf0123456789"],
+    ["a Gemini key", `provider rejected ${GEMINI_KEY}`, "1234567890abcdefghij"],
+    ["a bearer token", `Authorization: Bearer ${AGENT_CRED}`, "s3cr3tPart"],
+    ["a credential in a URL", `GET https://node/x?apiKey=${AGENT_CRED}`, "s3cr3tPart"],
+  ])("never logs %s in free text", (_label, text, secret) => {
+    expect(leaked(text, secret)).toBe(false);
+  });
+
+  it("scrubs a credential inside an Error message", () => {
+    expect(leaked(new Error(`invoke failed: ${AGENT_CRED}`), "s3cr3tPart")).toBe(false);
+  });
+
+  it("scrubs a credential nested in log metadata", () => {
+    expect(leaked({ meta: { detail: `key ${OPENAI_KEY} rejected` } }, "AbCdEf0123456789")).toBe(
+      false,
+    );
+  });
+
+  it("leaves DIDs intact — they are public and the audit trail depends on them", () => {
+    // Over-redaction is its own failure: an operator who cannot see which agent
+    // a log line concerns cannot debug anything, and the status page and audit
+    // records both publish DIDs by design.
+    const did = "did:t3n:befa498bd983b6629e12977245899e0f8e0ee66b";
+    const out = JSON.stringify(redact({ agentDid: did, msg: `agent ${did} acted` }));
+    expect(out).toContain(did);
+    expect(out.match(new RegExp(did, "g"))).toHaveLength(2);
+  });
+
+  it("still masks rather than deletes, so log lines stay correlatable", () => {
+    const out = JSON.stringify(redact(`failed for ${AGENT_CRED}`));
+    expect(out).toContain("t3n_ke");
+    expect(out).toContain("…");
+  });
+});

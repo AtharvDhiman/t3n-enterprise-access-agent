@@ -162,7 +162,7 @@ journal and start a new one, recording the changeover date.
 ## Running the tests
 
 ```bash
-npm test              # 170 tests
+npm test              # 180 tests
 npm run test:watch
 npm run verify        # typecheck + lint + tests — run before every commit
 ```
