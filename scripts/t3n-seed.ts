@@ -49,6 +49,8 @@ import {
   type UserGrant,
 } from "@terminal3/t3n-sdk";
 
+import { applyBaseUrlOverride } from "./lib/node-url.ts";
+
 const GREEN = "\x1b[32m";
 const YELLOW = "\x1b[33m";
 const RED = "\x1b[31m";
@@ -58,6 +60,7 @@ const RESET = "\x1b[0m";
 
 const ok = (m: string) => console.log(`${GREEN}✓${RESET} ${m}`);
 const warn = (m: string) => console.log(`${YELLOW}!${RESET} ${m}`);
+const fail = (m: string) => console.log(`${RED}✗${RESET} ${m}`);
 const info = (m: string) => console.log(`${DIM}  ${m}${RESET}`);
 
 const READ_FUNCTIONS = ["org-data-get", "org-data-list"];
@@ -149,6 +152,7 @@ async function main(): Promise<void> {
   }
 
   setEnvironment(envName);
+  applyBaseUrlOverride();
   const wasmComponent = await loadWasmComponent();
   const address = eth_get_address(tenantKey);
   const t3n = new T3nClient({
@@ -181,6 +185,7 @@ async function main(): Promise<void> {
   // Deterministic per (subject, claim) so re-running updates rather than
   // duplicating. The contract derives the entry id from this counter.
   let seq = 1000;
+  const failedWrites: string[] = [];
   for (const r of RECORDS) {
     const payload = {
       v: 1 as const,
@@ -203,8 +208,19 @@ async function main(): Promise<void> {
         info(`${r.claim} → ${r.scope} (already present)`);
       } else {
         warn(`write failed for ${r.claim}: ${message}`);
+        failedWrites.push(`${r.claim} → ${r.scope}`);
       }
     }
+  }
+  // Every failure above was a `warn` inside the loop, and the script then
+  // printed a green tick claiming all of them had been written and exited 0.
+  // A seed where every write failed reported complete success, and the operator
+  // only discovered it when live evaluation found no claims.
+  if (failedWrites.length > 0) {
+    fail(`${failedWrites.length} of ${RECORDS.length} claim records could not be written`);
+    for (const f of failedWrites) info(`  failed: ${f}`);
+    info("Fix the cause and re-run. Grants are not recorded against a partial seed.");
+    process.exit(1);
   }
   ok(`${RECORDS.length} claim records written`);
   info("no names, documents, dates of birth or identifiers were written");
@@ -217,12 +233,22 @@ async function main(): Promise<void> {
   // other agents, or a second agent provisioned later, silently deletes access
   // nobody asked to remove. Read first, replace only our own row, write back the
   // whole merged list.
-  let existingGrants: UserGrant[] = [];
+  //
+  // The read must SUCCEED before the write. `grantsGet` returns an empty list
+  // when no grant record exists (verified against testnet: an unknown contract
+  // id returns `{grants: []}` rather than throwing), so a thrown error here can
+  // only mean a real failure — a network blip, a 5xx, an expired session. This
+  // catch previously swallowed that and carried on with an empty `existing`,
+  // which turned a transient read failure into a full-document write that
+  // revoked every other grantee. Refusing to write is the only safe response.
+  let existingGrants: UserGrant[];
   try {
     existingGrants = (await org.grantsGet({ orgDid, contractId })).grants;
   } catch (err) {
-    // No grant record yet is the normal first-run case, not a failure.
-    info(`no existing grant record (${err instanceof Error ? err.message : String(err)})`);
+    fail(`could not read the existing grant record: ${err instanceof Error ? err.message : String(err)}`);
+    info("Refusing to continue: `setGrants` replaces the whole document, so writing");
+    info("without knowing what is already there would revoke every other grantee.");
+    process.exit(1);
   }
   const preservedGrants = existingGrants.filter(
     (g) => g.user_did.toLowerCase() !== agentDid.toLowerCase(),
@@ -261,11 +287,16 @@ async function main(): Promise<void> {
       },
     ],
   };
-  let existingAgents: AgentAuthEntry[] = [];
+  // Same rule as the grant record above: `agentAuthUpdate` replaces the whole
+  // delegation policy, so a failed read must stop the write rather than be
+  // treated as "there was nothing there".
+  let existingAgents: AgentAuthEntry[];
   try {
     existingAgents = (await t3n.getAgentAuth()).agents;
   } catch (err) {
-    info(`no existing delegation policy (${err instanceof Error ? err.message : String(err)})`);
+    fail(`could not read the existing delegation policy: ${err instanceof Error ? err.message : String(err)}`);
+    info("Refusing to continue rather than revoking every other delegated agent.");
+    process.exit(1);
   }
   const mergedAuth = mergeAgentAuthEntries(existingAgents, [ourEntry]);
   for (const row of mergedAuth.preservedRows) info(`preserved delegation: ${row}`);

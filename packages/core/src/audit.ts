@@ -52,6 +52,29 @@ export interface AuditStats {
 }
 
 /**
+ * Parse a query bound into an instant.
+ *
+ * A bare `YYYY-MM-DD` means the whole of that UTC day, so an `end` bound
+ * extends to its last millisecond. An unparseable bound is ignored rather than
+ * silently matching nothing — a typo in a filter must not look like "there are
+ * no records", which is the most misleading answer an audit log can give.
+ */
+function boundToMs(value: string | undefined, edge: "start" | "end"): number | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const ms = Date.parse(`${trimmed}T00:00:00.000Z`);
+    if (Number.isNaN(ms)) return null;
+    return edge === "start" ? ms : ms + 86_400_000 - 1;
+  }
+
+  const ms = Date.parse(trimmed);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/**
  * File-backed audit store with an in-memory mirror.
  *
  * The mirror keeps the dashboard responsive without a query engine; the file
@@ -155,13 +178,21 @@ export class AuditStore {
     const limit = Math.min(Math.max(q.limit ?? 50, 1), 500);
     const offset = Math.max(q.offset ?? 0, 0);
     const search = q.search?.trim().toLowerCase();
+    const fromMs = boundToMs(q.from, "start");
+    const toMs = boundToMs(q.to, "end");
 
     const filtered = this.records
       .filter((r) => (q.decision ? r.decision === q.decision : true))
       .filter((r) => (q.policyId ? r.policyId === q.policyId : true))
       .filter((r) => (q.subjectType ? r.subjectType === q.subjectType : true))
-      .filter((r) => (q.from ? r.timestamp >= q.from : true))
-      .filter((r) => (q.to ? r.timestamp <= q.to : true))
+      // Bounds are compared as instants, not as strings. `to=2026-09-04` is a
+      // date, and every record that day carries a full timestamp, so the string
+      // test `"2026-09-04T10:06:00Z" <= "2026-09-04"` is false — an inclusive
+      // upper bound silently excluded the entire last day of the range, which
+      // for an auditor pulling "everything up to the incident date" is a
+      // missing-evidence bug, not a display quirk.
+      .filter((r) => (fromMs === null ? true : Date.parse(r.timestamp) >= fromMs))
+      .filter((r) => (toMs === null ? true : Date.parse(r.timestamp) <= toMs))
       .filter((r) =>
         search
           ? r.resource.toLowerCase().includes(search) ||

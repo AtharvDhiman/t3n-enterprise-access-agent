@@ -128,7 +128,13 @@ function redactInner(value: unknown, depth: number, seen: WeakSet<object>): unkn
  * deployment-scoped and lives in the environment.
  */
 export function hashSubject(subjectRef: string, salt: string): string {
-  return createHash("sha256").update(`${salt}:${subjectRef}`).digest("hex").slice(0, 32);
+  // Canonicalised first. Terminal 3 DIDs are hex and compared case-insensitively
+  // everywhere else in this system (see the grant filter in packages/t3n), so
+  // hashing the raw string gave one subject two audit identities depending on
+  // how the DID happened to be typed — and broke the documented proof that an
+  // auditor can recompute the hash from a known subject reference.
+  const canonical = subjectRef.trim().toLowerCase();
+  return createHash("sha256").update(`${salt}:${canonical}`).digest("hex").slice(0, 32);
 }
 
 /** Stable, collision-resistant audit identifier. */

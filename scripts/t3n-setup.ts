@@ -41,6 +41,8 @@ import {
   type Environment,
 } from "@terminal3/t3n-sdk";
 
+import { applyBaseUrlOverride } from "./lib/node-url.ts";
+
 const GREEN = "\x1b[32m";
 const YELLOW = "\x1b[33m";
 const RED = "\x1b[31m";
@@ -81,6 +83,7 @@ async function main(): Promise<void> {
   }
 
   setEnvironment(envName);
+  applyBaseUrlOverride();
   const wasmComponent = await loadWasmComponent();
   const address = eth_get_address(tenantKey);
 
@@ -150,7 +153,7 @@ async function main(): Promise<void> {
 
   console.log(`\n${GREEN}${BOLD}Provisioning complete.${RESET}`);
   console.log(`${DIM}Organisation : ${orgDid}${RESET}`);
-  console.log(`${DIM}Next         : npm run t3n:grant   (seed claims + record consent)${RESET}\n`);
+  console.log(`${DIM}Next         : npm run t3n:seed    (seed claims + record consent)${RESET}\n`);
 }
 
 main().catch((err: unknown) => {

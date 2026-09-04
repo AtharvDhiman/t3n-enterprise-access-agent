@@ -247,7 +247,13 @@ export class ComplianceService {
     return {
       auditId: decision.auditId,
       timestamp: decision.timestamp,
-      agentId: this.agentId,
+      // Read live, not from a field cached at construction. `warmup()` is the
+      // only thing that refreshed that cache and it is deliberately non-fatal,
+      // so a T3N connection that came up a moment late — or on the retry inside
+      // the first request — left every subsequent audit row stamped
+      // "unprovisioned-agent" until the process restarted. The audit trail then
+      // could not answer "which agent made this decision" for those rows.
+      agentId: this.connection?.agentDid ?? this.agentId,
       requestType: "access_request",
       policyId: decision.policy,
       policyVersion: decision.policyVersion,

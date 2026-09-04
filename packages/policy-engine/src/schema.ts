@@ -145,36 +145,70 @@ export const PolicyFileSchema = z
 
     // Membership in `resolution.order` is not the same as reachability.
     // `resolvePolicyId` is an ordered first-match, so a policy whose entire
-    // (subject type x resource x access level) cross-product is already covered
-    // by an earlier entry can never be selected — it is dead config that looks
+    // (subject type x resource x access level) cross-product is already claimed
+    // by earlier entries can never be selected — it is dead config that looks
     // live. This shipped as a real defect: `vendor_readonly_access` sat below
     // `contractor_access`, which is a superset on all three dimensions, so
     // every vendor read resolved to the stricter contractor policy and asked
     // for two scopes it did not need.
-    for (let i = 0; i < file.resolution.order.length; i++) {
-      const laterId = file.resolution.order[i];
-      const later = laterId ? file.policies[laterId] : undefined;
-      if (!later) continue;
+    //
+    // The check walks the cross-product, exactly as `resolvePolicyId` does,
+    // accumulating the triples each entry is the first to claim. Comparing each
+    // policy against ONE earlier policy at a time — the first version of this
+    // guard — missed every case where two or more earlier entries jointly cover
+    // a later one. Adding a policy that tightens a control (say, requiring an
+    // NDA and a named approver for wiki reads by anyone) validated cleanly,
+    // appeared in `GET /api/policies`, and governed nothing, while access the
+    // operator believed was now gated kept being auto-approved by the looser
+    // policies underneath it.
+    const claimed = new Map<string, string>();
+    const seenInOrder = new Set<string>();
 
-      for (let j = 0; j < i; j++) {
-        const earlierId = file.resolution.order[j];
-        const earlier = earlierId ? file.policies[earlierId] : undefined;
-        if (!earlier) continue;
+    for (const policyId of file.resolution.order) {
+      // A repeated entry used to be compared against itself, which trivially
+      // "covered" it and produced the uninterpretable advice to move a policy
+      // above itself. Name the actual mistake instead.
+      if (seenInOrder.has(policyId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["resolution", "order"],
+          message: `policy "${policyId}" is listed more than once in \`resolution.order\`. Remove the duplicate entry — only the first occurrence can ever match.`,
+        });
+        continue;
+      }
+      seenInOrder.add(policyId);
 
-        const covers =
-          later.applies_to_subject_types.every((t) =>
-            earlier.applies_to_subject_types.includes(t),
-          ) &&
-          later.resources.every((r) => earlier.resources.includes(r)) &&
-          later.access_levels.every((l) => earlier.access_levels.includes(l));
+      const policy = file.policies[policyId];
+      if (!policy) continue;
 
-        if (covers) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: ["resolution", "order"],
-            message: `policy "${laterId}" is unreachable: "${earlierId}" appears earlier in \`resolution.order\` and already covers every subject type, resource and access level it declares. Move "${laterId}" above "${earlierId}" (most specific first), or narrow "${earlierId}".`,
-          });
+      const own: string[] = [];
+      for (const subjectType of policy.applies_to_subject_types) {
+        for (const resource of policy.resources) {
+          for (const accessLevel of policy.access_levels) {
+            own.push(`${subjectType}|${resource}|${accessLevel}`);
+          }
         }
+      }
+
+      const shadowedBy = new Set<string>();
+      let fresh = 0;
+      for (const triple of own) {
+        const owner = claimed.get(triple);
+        if (owner === undefined) {
+          claimed.set(triple, policyId);
+          fresh++;
+        } else {
+          shadowedBy.add(owner);
+        }
+      }
+
+      if (own.length > 0 && fresh === 0) {
+        const owners = [...shadowedBy].map((id) => `"${id}"`).join(", ");
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["resolution", "order"],
+          message: `policy "${policyId}" is unreachable: every subject type, resource and access level it declares is already claimed by ${owners}, which appear earlier in \`resolution.order\`. Move "${policyId}" above them (most specific first), or narrow them.`,
+        });
       }
     }
   });

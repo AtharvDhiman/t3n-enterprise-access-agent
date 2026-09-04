@@ -75,7 +75,7 @@ npm run t3n:connect             # must print did:t3n:…
 npm run t3n:setup               # creates org + agent, writes DIDs to .env
 npm run t3n:seed                # claim records + consent grants
 #   set CLAIM_SOURCE=live, restart
-npm run verify                  # typecheck + lint + 121 tests
+npm run verify                  # typecheck + lint + 163 tests
 ```
 
 Production: [deployment.md](deployment.md).

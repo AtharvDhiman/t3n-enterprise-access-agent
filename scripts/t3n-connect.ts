@@ -24,8 +24,11 @@ import {
   type Environment,
 } from "@terminal3/t3n-sdk";
 
+import { applyBaseUrlOverride } from "./lib/node-url.ts";
+
 const GREEN = "\x1b[32m";
 const RED = "\x1b[31m";
+const YELLOW = "[33m";
 const DIM = "\x1b[2m";
 const BOLD = "\x1b[1m";
 const RESET = "\x1b[0m";
@@ -43,6 +46,10 @@ function info(msg: string): void {
 /** Mask key material so a terminal screenshot is never a leak. */
 function mask(key: string): string {
   return key.length > 12 ? `${key.slice(0, 6)}…${key.slice(-4)}` : "[REDACTED]";
+}
+
+function warn(msg: string): void {
+  console.log(`${YELLOW}!${RESET} ${msg}`);
 }
 
 function requireKey(name: string): string {
@@ -115,6 +122,11 @@ async function main(): Promise<void> {
   }
 
   setEnvironment(envName);
+  // The server honours T3N_BASE_URL (packages/t3n/src/config.ts) but the CLIs
+  // did not, so an operator pointing the app at a specific node still had these
+  // scripts talking to the environment default — seeding one node while the app
+  // read another, with no error to explain the empty results.
+  applyBaseUrlOverride();
   ok(`environment set to "${envName}"`);
   info(`node URL: ${getNodeUrl()}`);
 
@@ -128,12 +140,23 @@ async function main(): Promise<void> {
   if (agentKey) {
     agentDid = await authenticateAs("agent", agentKey, envName, wasmComponent);
     if (tenantDid === agentDid) {
-      fail(
-        "tenant and agent resolved to the SAME DID — every key claimed under one account binds to one identity. Use `npm run t3n:setup` to provision a separate agent.",
+      // A warning, not a fatal error. Every key claimed under one Terminal 3
+      // account binds to that account's single identity, so a second claimed
+      // key resolving to the tenant DID is the NORMAL outcome — and the server
+      // handles it: it ignores T3N_AGENT_KEY and runs in DELEGATED_TENANT_READ
+      // using the `createAgent`-provisioned agent and its opaque credential.
+      // Exiting 1 here made the documented first command fail on a deployment
+      // that works, and told the operator to run `t3n:setup`, which they had
+      // already run — the agent identity exists, it just has no session key.
+      warn(
+        "T3N_AGENT_KEY resolves to the same DID as T3N_API_KEY. Both keys were claimed under one account, so they bind to one identity.",
       );
-      process.exit(1);
+      info("This is not fatal. The server ignores T3N_AGENT_KEY and uses the");
+      info("provisioned agent's opaque credential instead (DELEGATED_TENANT_READ).");
+      agentDid = null;
+    } else {
+      ok("tenant and agent are distinct DIDs");
     }
-    ok("tenant and agent are distinct DIDs");
   }
 
   // Keyed, session-free read. Confirms the agent's API key works on the

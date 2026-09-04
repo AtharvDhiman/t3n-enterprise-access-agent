@@ -193,7 +193,7 @@ This was treated as the primary requirement, not an afterthought.
   disable a control.
 - **No build step for the server.** Runs from TypeScript sources via `tsx`, so
   there is no compiled artefact that can drift from the source you are reading.
-- **121 tests, fully offline.** No network, no credentials — passes on a fresh
+- **163 tests, fully offline.** No network, no credentials — passes on a fresh
   clone and in CI.
 - **The audit trail is a file you can read with `cat`.**
 - **Documentation written for a stranger:** architecture, maintenance, deployment,
@@ -254,14 +254,14 @@ npm run t3n:setup            # creates org + agent, writes DIDs back to .env
 npm run t3n:seed             # claim records + consent grants
 #   set CLAIM_SOURCE=live, restart
 
-npm run verify               # typecheck + lint + 121 tests
+npm run verify               # typecheck + lint + 163 tests
 ```
 
 ## 11. Status
 
 | | |
 |---|---|
-| Tests | **121 passing**, offline, no credentials required |
+| Tests | **163 passing**, offline, no credentials required |
 | Typecheck | clean |
 | Lint | clean, zero warnings |
 | Build | 60 kB gzipped frontend |

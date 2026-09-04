@@ -198,7 +198,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     );
   }
 
-  const text = await response.text();
+  // Inside a try. `fetch` resolves as soon as the headers arrive, so a
+  // connection that dies while the body is streaming rejects HERE, not above —
+  // and it rejects with a raw TypeError. Every caller does
+  // `catch (err) { if (err instanceof ApiError) ... }`, so that TypeError was
+  // swallowed by all of them and the page sat on "Loading…" forever with
+  // nothing on screen or in the console to say why.
+  let text: string;
+  try {
+    text = await response.text();
+  } catch {
+    throw new ApiError(
+      response.status,
+      "NETWORK",
+      "The connection dropped while the server was responding.",
+      "Check that the API is still running, then try again.",
+    );
+  }
   let body: unknown = null;
   if (text.length > 0) {
     try {

@@ -39,8 +39,11 @@ function todayUtcStart(): number {
   return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
 }
 
+/** The day the fixture constants below were evaluated (module import time). */
+const BUILD_ANCHOR = todayUtcStart();
+
 const at = (offsetDays: number): string =>
-  new Date(todayUtcStart() + offsetDays * DAY).toISOString();
+  new Date(BUILD_ANCHOR + offsetDays * DAY).toISOString();
 
 function claim(
   id: string,
@@ -228,7 +231,37 @@ export const DEMO_SCENARIOS: readonly DemoScenario[] = [
 ];
 
 export function findScenario(subjectRef: string): DemoScenario | null {
-  return DEMO_SCENARIOS.find((s) => s.subjectRef === subjectRef) ?? null;
+  const scenario = DEMO_SCENARIOS.find((s) => s.subjectRef === subjectRef) ?? null;
+  return scenario ? { ...scenario, claims: scenario.claims.map(reanchor) } : null;
+}
+
+/**
+ * Slide a fixture claim's dates to be relative to *now*, not to process start.
+ *
+ * `DEMO_SCENARIOS` is a module-level constant, so every `at(offsetDays)` in it
+ * was evaluated once, when the module was first imported. The offsets were
+ * chosen to sit inside each policy's `max_claim_age_days`; on a server left
+ * running they drift out of it, and scenario D — whose whole point is that
+ * every requirement passes and the decision is still REVIEW_REQUIRED because a
+ * human approver is required — silently turned into DENIED after about three
+ * weeks of uptime. A demo that changes its answer depending on how long the
+ * process has been up is worse than no demo: a judge or an operator sees a
+ * documented outcome contradicted with no explanation.
+ *
+ * Re-deriving the offset against the original anchor and re-applying it to the
+ * current day keeps every scenario exactly as far from "today" as it was
+ * designed to be, whether the server started a minute or a month ago.
+ */
+function reanchor(claim: Claim): Claim {
+  const shift = todayUtcStart() - BUILD_ANCHOR;
+  const slide = (iso: string | null): string | null =>
+    iso === null ? null : new Date(Date.parse(iso) + shift).toISOString();
+
+  return {
+    ...claim,
+    verifiedAt: slide(claim.verifiedAt),
+    expiresAt: slide(claim.expiresAt),
+  };
 }
 
 export class DemoClaimSource implements ClaimSource {

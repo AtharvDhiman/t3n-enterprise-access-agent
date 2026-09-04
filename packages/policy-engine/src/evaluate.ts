@@ -77,6 +77,9 @@ export interface PolicySummary {
   rules: EffectiveRules;
 }
 
+/** Tolerance for ordinary clock skew between this host and an issuer. */
+const CLOCK_SKEW_TOLERANCE_DAYS = 1;
+
 const MS_PER_DAY = 86_400_000;
 
 export class PolicyEngine {
@@ -300,6 +303,19 @@ export class PolicyEngine {
     }
 
     const ageDays = (now.getTime() - verifiedMs) / MS_PER_DAY;
+    // A future verification date is not evidence of anything. It made `ageDays`
+    // negative, so the freshness test passed trivially and a claim stamped a
+    // year ahead read as maximally fresh — the one input that should never be
+    // trusted was the one that could never go stale. Clock skew of a few
+    // minutes is normal, so allow a small tolerance and reject beyond it.
+    if (ageDays < -CLOCK_SKEW_TOLERANCE_DAYS) {
+      return {
+        claimId,
+        satisfied: false,
+        reason: "expired",
+        detail: `${label}: the verification date is in the future, so its age cannot be established.`,
+      };
+    }
     if (ageDays > rules.maxClaimAgeDays) {
       return {
         claimId,

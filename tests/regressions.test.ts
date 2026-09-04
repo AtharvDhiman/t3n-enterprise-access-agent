@@ -6,24 +6,27 @@
  * return quietly.
  */
 
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { AuditStore, type AuditRecord } from "@t3n-aca/core";
-import { validatePolicyConfig } from "@t3n-aca/policy-engine";
+import { AuditStore, hashSubject, type AuditRecord } from "@t3n-aca/core";
+import { parsePolicyConfig, validatePolicyConfig } from "@t3n-aca/policy-engine";
 import {
+  DEMO_SCENARIOS,
+  DemoClaimSource,
   LiveT3nClaimSource,
   T3nConnection,
   emptyClaimSet,
+  findScenario,
   type AppConfig,
   type ClaimSource,
 } from "@t3n-aca/t3n";
 
 import { ComplianceService } from "../apps/server/src/service";
-import { NOW, claim, claimSet, daysFromNow, loadRealEngine, request } from "./helpers";
+import { NOW, POLICY_PATH, claim, claimSet, daysFromNow, loadRealEngine, request } from "./helpers";
 
 const AGENT_DID = "did:t3n:befa498bb1b2c3d4e5f60718293a4b5c6d7e8e66";
 const ORG_DID = "did:t3n:bc00034f1122334455667788990011223344a367";
@@ -614,5 +617,257 @@ describe("a scope read must page, and must never pass off a truncated read as co
     await expect(readScope(ORG_DID, "compliance/identity", SUBJECT_DID)).rejects.toThrow(
       /too large|more than/i,
     );
+  });
+});
+
+describe("an inclusive audit date bound must include that whole day", () => {
+  // `from`/`to` were compared as raw strings against full ISO timestamps, so
+  // `to=2026-08-29` excluded every record on 2026-08-29 — "2026-08-29T12:00Z"
+  // sorts after "2026-08-29". An auditor pulling everything up to an incident
+  // date silently lost the day the incident happened.
+  function storeWith(timestamps: string[]): AuditStore {
+    const dir = mkdtempSync(join(tmpdir(), "t3n-bounds-"));
+    const store = new AuditStore(join(dir, "audit.jsonl"));
+    const rows = timestamps.map((ts, i) => ({ ...auditRecord(`aud_${i}`), timestamp: ts }));
+    (store as unknown as { records: AuditRecord[]; loaded: boolean }).records = rows;
+    (store as unknown as { loaded: boolean }).loaded = true;
+    return store;
+  }
+
+  const DAY_BEFORE = "2026-08-28T23:59:59.000Z";
+  const MORNING = "2026-08-29T00:00:00.000Z";
+  const MIDDAY = "2026-08-29T12:00:00.000Z";
+  const LAST_MS = "2026-08-29T23:59:59.999Z";
+  const NEXT_DAY = "2026-08-30T00:00:01.000Z";
+
+  it("includes every record on the `to` date", () => {
+    const store = storeWith([DAY_BEFORE, MORNING, MIDDAY, LAST_MS, NEXT_DAY]);
+    const page = store.query({ to: "2026-08-29", limit: 500 });
+    expect(page.records.map((r) => r.timestamp).sort()).toEqual([
+      DAY_BEFORE,
+      MORNING,
+      MIDDAY,
+      LAST_MS,
+    ]);
+  });
+
+  it("includes every record on the `from` date", () => {
+    const store = storeWith([DAY_BEFORE, MORNING, MIDDAY, NEXT_DAY]);
+    const page = store.query({ from: "2026-08-29", limit: 500 });
+    expect(page.records.map((r) => r.timestamp).sort()).toEqual([MORNING, MIDDAY, NEXT_DAY]);
+  });
+
+  it("still honours a full ISO bound", () => {
+    const store = storeWith([MORNING, MIDDAY, NEXT_DAY]);
+    expect(store.query({ to: "2026-08-29T12:00:00.000Z", limit: 500 }).total).toBe(2);
+  });
+
+  it("ignores an unparseable bound rather than matching nothing", () => {
+    // Returning zero rows for a typo is the most misleading answer an audit
+    // log can give — it reads as "no such decisions were ever made".
+    const store = storeWith([MORNING, MIDDAY, NEXT_DAY]);
+    expect(store.query({ to: "last tuesday", limit: 500 }).total).toBe(3);
+  });
+});
+
+describe("a claim verified in the future is not fresh evidence", () => {
+  // `ageDays = now - verifiedAt` went negative for a future date, so the
+  // `> maxClaimAgeDays` test passed trivially: the one input that should never
+  // be trusted was the only one that could never go stale.
+  const scopes = ["compliance/employment", "compliance/identity"];
+
+  it("does not satisfy a requirement", () => {
+    const result = ev(
+      request({ subjectType: "employee", resource: "internal_wiki", accessLevel: "read" }),
+      claimSet(
+        [
+          claim("identity_verified"),
+          claim("employment_verified", { verifiedAt: daysFromNow(400) }),
+        ],
+        { requestedScopes: scopes },
+      ),
+    );
+    expect(result.decision).not.toBe("APPROVED");
+    const employment = result.requirementDetail.find((r) => r.claimId === "employment_verified");
+    expect(employment?.satisfied).toBe(false);
+    expect(employment?.detail).toMatch(/future/i);
+  });
+
+  it("tolerates ordinary clock skew", () => {
+    // Minutes of skew between this host and an issuer is normal and must not
+    // start failing real claims.
+    const result = ev(
+      request({ subjectType: "employee", resource: "internal_wiki", accessLevel: "read" }),
+      claimSet(
+        [
+          claim("identity_verified"),
+          claim("employment_verified", { verifiedAt: daysFromNow(0.01) }),
+        ],
+        { requestedScopes: scopes },
+      ),
+    );
+    expect(result.decision).toBe("APPROVED");
+  });
+});
+
+describe("a subject reference must hash to one audit identity", () => {
+  // DIDs are hex and are compared case-insensitively everywhere else, so
+  // hashing the raw string gave one subject two audit identities depending on
+  // how the DID happened to be typed — and broke the documented proof that an
+  // auditor can recompute the hash from a known subject reference.
+  it("is case- and whitespace-insensitive", () => {
+    const salt = "test-salt";
+    const lower = "did:t3n:2eaed84a2d5d72c2f8a19f1a832e8d63d96a9e5a";
+    expect(hashSubject(lower.toUpperCase(), salt)).toBe(hashSubject(lower, salt));
+    expect(hashSubject(`  ${lower}  `, salt)).toBe(hashSubject(lower, salt));
+  });
+
+  it("still separates different subjects, and different salts", () => {
+    const a = "did:t3n:2eaed84a2d5d72c2f8a19f1a832e8d63d96a9e5a";
+    const b = "did:t3n:befa498bd983b6629e12977245899e0f8e0ee66b";
+    expect(hashSubject(a, "s1")).not.toBe(hashSubject(b, "s1"));
+    expect(hashSubject(a, "s1")).not.toBe(hashSubject(a, "s2"));
+  });
+});
+
+describe("a policy shadowed by the union of earlier entries must be rejected", () => {
+  // The first version of this guard compared each policy against ONE earlier
+  // policy at a time, so joint coverage was structurally undetectable. An
+  // operator could add a policy that tightened a control — requiring an NDA and
+  // a named approver — watch it validate, see it listed by GET /api/policies,
+  // and have it govern nothing, while the looser policies underneath kept
+  // auto-approving the access they thought they had just gated.
+  const base = (order: string[], extra = "") => `
+version: "1.0.0"
+claims:
+  identity_verified: { scope: compliance/identity, label: Identity, description: d }
+  nda_signed: { scope: compliance/legal, label: NDA, description: d }
+defaults:
+  minimum_assurance: substantial
+  max_claim_age_days: 365
+  expired_claim_behavior: review
+  failed_claim_behavior: deny
+  expiring_soon_days: 30
+policies:
+  emp_wiki:
+    label: Employee wiki
+    description: d
+    applies_to_subject_types: [employee]
+    resources: [internal_wiki, expense_system]
+    access_levels: [read]
+    required_claims: [identity_verified]
+  con_wiki:
+    label: Contractor wiki
+    description: d
+    applies_to_subject_types: [contractor]
+    resources: [internal_wiki, project_workspace]
+    access_levels: [read]
+    required_claims: [identity_verified]
+${extra}
+resolution:
+  order: [${order.join(", ")}]
+  no_match_behavior: deny
+`;
+
+  const everyoneWiki = `  everyone_wiki:
+    label: Wiki for anyone, with an NDA
+    description: d
+    applies_to_subject_types: [employee, contractor]
+    resources: [internal_wiki]
+    access_levels: [read]
+    required_claims: [identity_verified, nda_signed]
+    rules:
+      require_manual_approval: true
+`;
+
+  const messageFor = (yaml: string): string => {
+    try {
+      parsePolicyConfig(yaml);
+      return "";
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+  };
+
+  it("rejects a policy covered jointly by two earlier ones", () => {
+    const message = messageFor(base(["emp_wiki", "con_wiki", "everyone_wiki"], everyoneWiki));
+    expect(message).toMatch(/everyone_wiki.*unreachable/i);
+    // And it names both culprits, not one arbitrary earlier entry.
+    expect(message).toContain("emp_wiki");
+    expect(message).toContain("con_wiki");
+  });
+
+  it("accepts the broad policy when it is ordered first, and the narrow ones keep their own ground", () => {
+    expect(messageFor(base(["everyone_wiki", "emp_wiki", "con_wiki"], everyoneWiki))).toBe("");
+  });
+
+  it("names a duplicated order entry instead of advising the impossible", () => {
+    // The old message read: move "emp_wiki" above "emp_wiki".
+    const message = messageFor(base(["emp_wiki", "emp_wiki", "con_wiki"]));
+    expect(message).toMatch(/listed more than once/i);
+    expect(message).not.toMatch(/above "emp_wiki"/);
+  });
+
+  it("still accepts the shipped policy file", () => {
+    expect(messageFor(readFileSync(POLICY_PATH, "utf8"))).toBe("");
+  });
+});
+
+describe("demo fixtures must not decay while the server is up", () => {
+  // DEMO_SCENARIOS is a module-level constant, so every fixture date was
+  // evaluated once at import. On a long-running server the offsets drift out of
+  // the policy's max_claim_age_days and scenario D — whose point is that every
+  // requirement passes and the answer is STILL REVIEW_REQUIRED because a human
+  // approver is required — silently turned into DENIED after about three weeks.
+  it("re-anchors claim dates to the current day on every read", () => {
+    const scenario = findScenario("demo:subject:dara");
+    expect(scenario).not.toBeNull();
+
+    const dated = scenario!.claims.filter((c) => c.verifiedAt !== null);
+    expect(dated.length).toBeGreaterThan(0);
+
+    const todayStart = Date.UTC(
+      new Date().getUTCFullYear(),
+      new Date().getUTCMonth(),
+      new Date().getUTCDate(),
+    );
+    for (const c of dated) {
+      const ageDays = (todayStart - Date.parse(c.verifiedAt!)) / 86_400_000;
+      // The privileged policy allows 180 days. Every fixture claim must stay
+      // comfortably inside that no matter how long the process has been up.
+      expect(ageDays).toBeLessThan(180);
+      expect(ageDays).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it("keeps every scenario's documented outcome reachable", async () => {
+    const source = new DemoClaimSource();
+    const engine = loadRealEngine();
+
+    for (const s of DEMO_SCENARIOS) {
+      const req = request({
+        subjectRef: s.subjectRef,
+        subjectType: s.subjectType as never,
+        resource: s.suggestedResource,
+        accessLevel: s.suggestedAccessLevel as never,
+      });
+      const policyId = engine.resolvePolicyId(req);
+      expect(policyId).not.toBeNull();
+
+      const policy = engine.getPolicy(policyId!);
+      const claimScopes: Record<string, string> = {};
+      for (const id of [...policy.required_claims, ...policy.optional_claims]) {
+        const scope = engine.scopeForClaim(id);
+        if (scope) claimScopes[id] = scope;
+      }
+
+      const claims = await source.fetchClaims({
+        subjectRef: s.subjectRef,
+        requiredScopes: engine.requiredScopes(policyId!),
+        claimScopes,
+      });
+      const decision = engine.evaluate(req, claims, { auditId: "aud_demo" });
+      expect(decision.decision, `scenario ${s.id}`).toBe(s.expectedDecision);
+    }
   });
 });
