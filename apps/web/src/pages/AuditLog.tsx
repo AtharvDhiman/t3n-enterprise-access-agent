@@ -46,7 +46,18 @@ export function AuditLog() {
         setError(null);
       } catch (err) {
         if (seq !== requestSeq.current) return;
+        // Clear the table too. Leaving the previous filter's rows on screen
+        // made the table contradict the controls above it, and leaving `total`
+        // at its initial 0 made the page state "0 decisions / No matching
+        // decisions" — an audit log asserting that no such decisions exist when
+        // it simply could not ask. That is the same fabricated-absence failure
+        // the claim source is careful never to commit; the UI must not commit
+        // it either.
+        setRecords([]);
+        setTotal(0);
+        setExpanded(null);
         if (err instanceof ApiError) setError(err);
+        else setError(new ApiError(0, "NETWORK", "Could not reach the server.", null));
       }
     },
     [decision, policyId, subjectType, search],
@@ -118,10 +129,23 @@ export function AuditLog() {
       {error && <ErrorNotice message={error.message} remediation={error.remediation} />}
 
       <Card
-        title={`${total} decision${total === 1 ? "" : "s"}`}
-        subtitle="Newest first — select any row to see why that decision was made"
+        // A failed query has no count. Rendering `0 decisions` alongside the
+        // error still asserted, in the card's own title, that none exist — and
+        // a reader scanning a compliance dashboard takes a number at face
+        // value. Say plainly that the count is unknown instead.
+        title={error ? "Decisions unavailable" : `${total} decision${total === 1 ? "" : "s"}`}
+        subtitle={
+          error
+            ? "The query did not complete, so this is not a count of zero"
+            : "Newest first — select any row to see why that decision was made"
+        }
       >
-        {records.length === 0 ? (
+        {error ? (
+          <EmptyState
+            title="Could not load the audit log"
+            hint="This is not the same as there being no decisions. Fix the error above and try again."
+          />
+        ) : records.length === 0 ? (
           <EmptyState title="No matching decisions" hint="Adjust the filters, or submit a request." />
         ) : (
           <>
@@ -145,10 +169,25 @@ export function AuditLog() {
                     // unkeyed and React warns.
                     <Fragment key={r.auditId}>
                       <tr
+                        // Focusable and operable by keyboard. It was a bare
+                        // `<tr onClick>`: reachable by mouse only, so the entire
+                        // evidence view — audit id, timestamp, agent DID,
+                        // subject hash, scopes requested vs authorized, claims
+                        // consulted, risk flags, next action — was unreachable
+                        // without a pointer. For an audit trail that is not a
+                        // polish issue.
+                        role="button"
+                        tabIndex={0}
                         onClick={() => setExpanded(expanded === r.auditId ? null : r.auditId)}
+                        onKeyDown={(e) => {
+                          if (e.key !== "Enter" && e.key !== " " && e.key !== "Spacebar") return;
+                          e.preventDefault(); // Space would otherwise scroll.
+                          setExpanded(expanded === r.auditId ? null : r.auditId);
+                        }}
                         aria-expanded={expanded === r.auditId}
+                        aria-label={`${r.decision} — ${r.resource}, ${r.accessLevel}. Show why this decision was made.`}
                         title="Show why this decision was made"
-                        className={`cursor-pointer border-b border-ink-50 transition last:border-0 ${
+                        className={`cursor-pointer border-b border-ink-50 outline-none transition last:border-0 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ink-900 ${
                           expanded === r.auditId ? "bg-ink-50" : "hover:bg-ink-50"
                         }`}
                       >

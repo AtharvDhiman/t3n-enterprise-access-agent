@@ -75,11 +75,17 @@ export function Dashboard({ onOpenAudit }: { onOpenAudit: () => void }) {
         />
       </div>
 
+      {/* `min-w-0` on both items is load-bearing. A grid item defaults to
+          min-width:auto, i.e. its min-content width — and the Recent-decisions
+          card contains a `min-w-[520px]` table, so below the lg breakpoint the
+          single-column grid was forced to ~776px and the whole PAGE scrolled
+          sideways on a phone. The table's own overflow-x-auto wrapper cannot
+          help while its grid parent refuses to shrink. */}
       <div className="grid gap-6 lg:grid-cols-3">
         <Card
           title="Terminal 3 connection"
           subtitle="Where the evidence behind these decisions comes from"
-          className="lg:col-span-1"
+          className="min-w-0 lg:col-span-1"
         >
           <dl className="space-y-3 text-sm">
             <div className="flex items-center justify-between gap-3">
@@ -122,7 +128,7 @@ export function Dashboard({ onOpenAudit }: { onOpenAudit: () => void }) {
         <Card
           title="Recent decisions"
           subtitle="Newest first"
-          className="lg:col-span-2"
+          className="min-w-0 lg:col-span-2"
           right={
             <button
               onClick={onOpenAudit}

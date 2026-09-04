@@ -28,8 +28,46 @@ const NAV: Array<{ id: View; label: string; icon: typeof LayoutDashboard }> = [
   { id: "ask", label: "Ask", icon: MessageSquare },
 ];
 
+const VIEW_IDS = new Set<string>(NAV.map((n) => n.id));
+
+/** The view named by the URL fragment, or the dashboard. */
+function viewFromHash(): View {
+  const id = window.location.hash.replace(/^#\/?/, "");
+  return VIEW_IDS.has(id) ? (id as View) : "dashboard";
+}
+
 export default function App() {
-  const [view, setView] = useState<View>("dashboard");
+  /**
+   * The current view lives in the URL fragment.
+   *
+   * It used to be component state alone, so every reload — including Vite's own
+   * after an edit — dropped the user back on the Dashboard, taking the audit
+   * filters, the current page and the expanded row with it. Browser Back left
+   * the app entirely from every view, and there was no way to send someone a
+   * link to the Audit log or to a particular decision. A fragment is enough to
+   * fix all three without adding a router dependency for six static views.
+   */
+  const [view, setViewState] = useState<View>(viewFromHash);
+
+  const setView = (next: View): void => {
+    // pushState so Back returns to the previous view rather than leaving.
+    window.location.hash = `#/${next}`;
+    setViewState(next);
+  };
+
+  useEffect(() => {
+    const onHashChange = (): void => setViewState(viewFromHash());
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  useEffect(() => {
+    // Normalise a bare or unknown fragment so the URL always names the view.
+    if (viewFromHash() !== view || window.location.hash === "") {
+      window.location.replace(`#/${view}`);
+    }
+  }, [view]);
+
   const [status, setStatus] = useState<T3nStatus | null>(null);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
 

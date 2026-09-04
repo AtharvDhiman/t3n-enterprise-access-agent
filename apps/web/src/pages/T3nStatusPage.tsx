@@ -25,10 +25,16 @@ export function T3nStatusPage() {
     void refresh();
   }, []);
 
-  if (error) return <ErrorNotice message={error.message} remediation={error.remediation} />;
-  if (!status) return <p className="text-sm text-ink-500">Loading…</p>;
+  // Deliberately NOT an early return on `error`. This page's whole job is
+  // showing connection health, and returning the error alone unmounted the
+  // Refresh button with it — so one transient blip left the page permanently
+  // stuck, with the single control that could clear it gone. Navigating to the
+  // view you are already on does not help either: `setView` is a no-op and
+  // React keeps the same instance and its error state. The error is rendered
+  // above whatever status we have instead, and Refresh always stays.
+  if (!status && !error) return <p className="text-sm text-ink-500">Loading…</p>;
 
-  const connected = status.state === "connected";
+  const connected = status?.state === "connected";
 
   return (
     <div className="space-y-6">
@@ -50,6 +56,24 @@ export function T3nStatusPage() {
         </button>
       </header>
 
+      {error && (
+        <ErrorNotice message={error.message} remediation={error.remediation} />
+      )}
+
+      {!status ? (
+        <p className="text-sm text-ink-500">
+          No status to show. Use Refresh once the API is reachable again.
+        </p>
+      ) : (
+        <StatusBody status={status} connected={connected} />
+      )}
+    </div>
+  );
+}
+
+function StatusBody({ status, connected }: { status: T3nStatus; connected: boolean }) {
+  return (
+    <>
       {!status.configured && (
         <ErrorNotice
           message="Terminal 3 is not configured on this server."
@@ -174,7 +198,7 @@ export function T3nStatusPage() {
           never logged, and never returned by any API route.
         </p>
       </div>
-    </div>
+    </>
   );
 }
 
