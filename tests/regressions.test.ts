@@ -420,6 +420,95 @@ describe("an unknown agent identity is a failure, not an empty grant set", () =>
 
     expect([...(await readGrantedScopes(ORG_DID))]).toEqual(["compliance/identity"]);
   });
+
+  it("resolves grants under per-function keying with WireScope records via getDelegation", async () => {
+    const source = new LiveT3nClaimSource({
+      agentDid: AGENT_DID,
+      orgDid: ORG_DID,
+      contractId: "tee:org-data/contracts",
+      async tenantOrgData() {
+        return {
+          async getDelegation() {
+            return {
+              contract_id: "tee:org-data/contracts",
+              grants: [
+                // Per-function row for org-data-get with read access
+                {
+                  grantee: AGENT_DID,
+                  function: "org-data-get",
+                  scopes: [
+                    { path: "compliance/identity", access: ["read"] },
+                    { path: "compliance/employment", access: ["read"] },
+                    // Write-only scope should be ignored for read operations
+                    { path: "compliance/audit_write", access: ["write"] },
+                  ],
+                },
+                // Per-function row for org-data-list with read access
+                {
+                  grantee: AGENT_DID,
+                  function: "org-data-list",
+                  scopes: [
+                    { path: "compliance/identity", access: ["read"] },
+                    // Note: compliance/employment intentionally omitted here
+                  ],
+                },
+                // Another agent's grant
+                {
+                  grantee: OTHER_DID,
+                  function: "*",
+                  scopes: [{ path: "compliance/background", access: ["read"] }],
+                },
+              ],
+            };
+          },
+        };
+      },
+    } as unknown as T3nConnection);
+
+    const readGrantedScopes = (
+      source as unknown as { readGrantedScopes(orgDid: string): Promise<Set<string>> }
+    ).readGrantedScopes.bind(source);
+
+    const scopes = await readGrantedScopes(ORG_DID);
+    // Only compliance/identity was granted for BOTH org-data-get and org-data-list with read access
+    expect([...scopes]).toEqual(["compliance/identity"]);
+  });
+
+  it("allows wildcard function '*' under per-function keying", async () => {
+    const source = new LiveT3nClaimSource({
+      agentDid: AGENT_DID,
+      orgDid: ORG_DID,
+      contractId: "tee:org-data/contracts",
+      async tenantOrgData() {
+        return {
+          async getDelegation() {
+            return {
+              contract_id: "tee:org-data/contracts",
+              grants: [
+                {
+                  grantee: AGENT_DID,
+                  function: "*",
+                  scopes: [
+                    { path: "compliance/identity", access: ["read"] },
+                    { path: "compliance/employment", access: ["read"] },
+                  ],
+                },
+              ],
+            };
+          },
+        };
+      },
+    } as unknown as T3nConnection);
+
+    const readGrantedScopes = (
+      source as unknown as { readGrantedScopes(orgDid: string): Promise<Set<string>> }
+    ).readGrantedScopes.bind(source);
+
+    const scopes = await readGrantedScopes(ORG_DID);
+    expect(scopes.has("compliance/identity")).toBe(true);
+    expect(scopes.has("compliance/employment")).toBe(true);
+    expect(scopes.size).toBe(2);
+  });
 });
 
 describe("a session-expiry storm must produce one re-authentication, not one per request", () => {

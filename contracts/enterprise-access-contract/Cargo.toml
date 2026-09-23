@@ -1,0 +1,17 @@
+[package]
+name = "enterprise-access-contract"
+version = "2.0.0"
+edition = "2021"
+description = "T3N Enterprise Access & Compliance Agent Tenant Contract with per-function scoped grants"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "0.36.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[package.metadata.component]
+package = "t3n:tenant-contract"

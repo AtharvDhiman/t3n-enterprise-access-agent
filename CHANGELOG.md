@@ -3,6 +3,18 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] — 2026-09-22
+
+### Added
+- **Per-Function Grant Scoping Support**: Updated grant resolution to support T3N per-function keying (`function: string`), allowing fine-grained data isolation between different agent contract functions.
+- **Structured Scope Records**: Support for `list<scope>` (`{ path, access }` records) in `readGrantedScopes` and seed provisioning, ensuring only scopes granting `"read"` access are evaluated.
+- **Enterprise Access Tenant Contract (v2.0.0)**: Added standalone Rust WASM component tenant contract target (`contracts/enterprise-access-contract`) implementing `host:tenant@2.0.0` with `CONTRACT_VERSION = "2.0.0"`.
+- **Regression Tests**: Added test coverage for per-function keying, `WireScope` access verb validation, and wildcard function matching.
+
+### Changed
+- **Upgraded `@terminal3/t3n-sdk` to 5.21.0**: Confirmed `rtmr1_allowlist` compatibility with testnet.
+- **Seed Scripts (`scripts/t3n-seed.ts`)**: Migrated to `setDelegation` with `readOnlyScopes` and per-function fanout; removed deprecated `readScopes` roster split.
+
 ## [1.0.0] — 2026-08-29
 
 First release. Built for the Terminal 3 ADK challenge.

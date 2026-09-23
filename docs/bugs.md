@@ -22,7 +22,7 @@ Contact for follow-up: <devrel@terminal3.io> / [developer Telegram](https://t.me
 ## BUG-1 — SDK 5.3.0 rejects the live testnet trust manifest, blocking all authentication
 
 **Severity: Critical — blocks every SDK operation on testnet.**
-**Status: worked around by pinning `5.2.0`.**
+**Status: Resolved on testnet node; upgraded to SDK `5.21.0`.**
 
 ### Summary
 
@@ -82,13 +82,15 @@ await fetchTrustedManifest("testnet");
 | 5.0.0 | ✓ OK |
 | 4.46.0 | ✓ OK |
 
-### Workaround
+### Resolution & Upgrade
 
-Pin the SDK to `5.2.0` **exactly** (not `^5.2.0`, which resolves to 5.3.0):
+The testnet cluster nodes were updated to return `rtmr1_allowlist` alongside `rtmr3_allowlist`.
+With `@terminal3/t3n-sdk@5.21.0` (and later), `fetchTrustedManifest("testnet")` passes and authenticates cleanly.
+The codebase has been unpinned and updated to `@terminal3/t3n-sdk@5.21.0`.
 
-```json
-"@terminal3/t3n-sdk": "5.2.0"
-```
+### Previous Workaround (prior to node fix)
+
+Pin the SDK to `5.2.0` **exactly** (not `^5.2.0`, which resolved to 5.3.0).
 
 ### Suggested fix
 

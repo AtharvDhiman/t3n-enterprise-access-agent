@@ -291,22 +291,101 @@ export class LiveT3nClaimSource implements ClaimSource {
     }
 
     const org = await this.connection.tenantOrgData();
-    const record = await org.grantsGet({
-      orgDid,
-      contractId: this.connection.contractId,
-    });
-
-    const granted = new Set<string>();
-    for (const grant of record.grants) {
-      if (grant.user_did.toLowerCase() !== agentDid.toLowerCase()) continue;
-      // A grant only counts if it also carries the functions a read needs.
-      const hasReadFunctions = READ_FUNCTIONS.every(
-        (fn) => grant.functions.includes(fn) || grant.functions.includes("*"),
-      );
-      if (!hasReadFunctions) continue;
-      for (const scope of grant.scopes) granted.add(scope);
+    // Prefer getDelegation (SDK 5.21.0+ per-function keying), falling back to grantsGet
+    let rawGrants: unknown[] = [];
+    const orgAny = org as unknown as Record<string, unknown>;
+    if (typeof orgAny.getDelegation === "function") {
+      try {
+        const delegation = await (orgAny.getDelegation as (input: unknown) => Promise<{ grants?: unknown[] }>)({
+          orgDid,
+          contractId: this.connection.contractId,
+        });
+        rawGrants = delegation.grants ?? [];
+      } catch {
+        const record = await org.grantsGet({
+          orgDid,
+          contractId: this.connection.contractId,
+        });
+        rawGrants = record.grants ?? [];
+      }
+    } else {
+      const record = await org.grantsGet({
+        orgDid,
+        contractId: this.connection.contractId,
+      });
+      rawGrants = record.grants ?? [];
     }
-    return granted;
+
+    // Under per-function keying, grants are scoped per function rather than per whole
+    // contract. Track granted scopes for each required read function.
+    const scopesByFunction = new Map<string, Set<string>>();
+    for (const fn of READ_FUNCTIONS) {
+      scopesByFunction.set(fn, new Set<string>());
+    }
+
+    for (const raw of rawGrants) {
+      const grant = raw as Record<string, unknown>;
+      const grantee = (grant.grantee ?? grant.user_did) as string | undefined;
+      if (!grantee || grantee.toLowerCase() !== agentDid.toLowerCase()) continue;
+
+      // Extract scopes that confer read access.
+      // Handles both legacy string[] and new list<scope> ({ path, access }) records.
+      const readScopesForThisGrant: string[] = [];
+      const scopesField = grant.scopes;
+      if (Array.isArray(scopesField)) {
+        for (const s of scopesField) {
+          if (typeof s === "string") {
+            readScopesForThisGrant.push(s);
+          } else if (s && typeof s === "object") {
+            const scopeRecord = s as { path?: string; access?: string[] };
+            if (scopeRecord.path) {
+              // Access must include "read" verb
+              if (!scopeRecord.access || (Array.isArray(scopeRecord.access) && scopeRecord.access.includes("read"))) {
+                readScopesForThisGrant.push(scopeRecord.path);
+              }
+            }
+          }
+        }
+      }
+
+      // Check which functions this grant confers:
+      // - Per-function keying: grant.function (single string, or "*")
+      // - Legacy: grant.functions (array of strings)
+      const singleFn = typeof grant.function === "string" ? grant.function : undefined;
+      const multiFn = Array.isArray(grant.functions) ? (grant.functions as string[]) : undefined;
+
+      for (const requiredFn of READ_FUNCTIONS) {
+        const matches =
+          singleFn === requiredFn ||
+          singleFn === "*" ||
+          (multiFn !== undefined && (multiFn.includes(requiredFn) || multiFn.includes("*")));
+
+        if (matches) {
+          const fnSet = scopesByFunction.get(requiredFn)!;
+          for (const sc of readScopesForThisGrant) {
+            fnSet.add(sc);
+          }
+        }
+      }
+    }
+
+    // The effective granted scopes are the intersection across all required read functions:
+    // Every required function must be permitted for that scope.
+    let granted: Set<string> | null = null;
+    for (const fn of READ_FUNCTIONS) {
+      const fnScopes = scopesByFunction.get(fn)!;
+      if (granted === null) {
+        granted = new Set(fnScopes);
+      } else {
+        for (const s of Array.from(granted)) {
+          if (!fnScopes.has(s)) {
+            granted.delete(s);
+          }
+        }
+      }
+    }
+
+    return granted ?? new Set<string>();
   }
 
   /**

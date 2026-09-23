@@ -114,23 +114,19 @@ Two rules a new source must honour:
 - Never return claims from a scope outside `request.requiredScopes`.
 
 ## Updating the Terminal 3 SDK
-
-> **The SDK is pinned to `5.2.0` deliberately.** `5.3.0` cannot authenticate
-> against testnet at all — see [bugs.md BUG-1](bugs.md).
+ 
+The project runs on `@terminal3/t3n-sdk@5.21.0` with verified support for testnet trust manifests (`rtmr1_allowlist`) and per-function grant scoping (`getDelegation`/`setDelegation`).
 
 To try a newer version:
-
+ 
 ```bash
 npm install @terminal3/t3n-sdk@<version> --workspace @t3n-aca/t3n
 npm install @terminal3/t3n-sdk@<version>            # root, for scripts/
 npm run t3n:connect                                 # MUST print a did:t3n: value
 npm run verify
 ```
-
-If `t3n:connect` fails at the trust-manifest step, the version is still affected
-by BUG-1; revert. Keep the root and workspace versions identical — a mismatch
-means the diagnostic script and the app talk to the platform through different
-code.
+ 
+Keep the root and workspace versions identical — a mismatch means the diagnostic script and the app talk to the platform through different code.
 
 Check the [ADK changelog](https://docs.terminal3.io/developers/adk/changelog)
 before upgrading. If contract function names change, they are all in

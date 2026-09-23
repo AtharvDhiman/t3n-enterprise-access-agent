@@ -1,0 +1,30 @@
+package t3n:tenant-contract@2.0.0;
+
+interface host {
+    enum access-verb {
+        read,
+        write,
+        delete,
+    }
+
+    record scope {
+        path: string,
+        access: list<access-verb>,
+    }
+
+    /// The single function this grant targets, or "*" for all functions
+    delegated-functions: func() -> string;
+
+    /// Returns list of scoped data paths with their allowed access verbs
+    delegated-scopes: func() -> list<scope>;
+}
+
+world tenant-contract {
+    import host;
+
+    /// Evaluates an access request against verified claims in consented scopes
+    export evaluate-access: func(request-json: string) -> string;
+
+    /// Returns the contract version (MAJOR bump: 2.0.0)
+    export contract-version: func() -> string;
+}

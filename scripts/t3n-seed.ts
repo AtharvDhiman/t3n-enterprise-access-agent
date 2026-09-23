@@ -44,6 +44,7 @@ import {
   getNodeUrl,
   createOrgDataClientFromSession,
   mergeAgentAuthEntries,
+  readOnlyScopes,
   type AgentAuthEntry,
   type Environment,
   type UserGrant,
@@ -263,33 +264,63 @@ async function main(): Promise<void> {
   //
   // The read must SUCCEED before the write. `grantsGet` returns an empty list
   // when no grant record exists (verified against testnet: an unknown contract
-  // id returns `{grants: []}` rather than throwing), so a thrown error here can
-  // only mean a real failure — a network blip, a 5xx, an expired session. This
-  // catch previously swallowed that and carried on with an empty `existing`,
-  // which turned a transient read failure into a full-document write that
-  // revoked every other grantee. Refusing to write is the only safe response.
-  let existingGrants: UserGrant[];
-  try {
-    existingGrants = (await org.grantsGet({ orgDid, contractId })).grants;
-  } catch (err) {
-    fail(`could not read the existing grant record: ${err instanceof Error ? err.message : String(err)}`);
-    info("Refusing to continue: `setGrants` replaces the whole document, so writing");
-    info("without knowing what is already there would revoke every other grantee.");
-    process.exit(1);
+  // The read must SUCCEED before the write. We support modern per-function keying
+  // (setDelegation / getDelegation with WireScope records) with fallback to legacy setGrants.
+  const orgAny = org as unknown as Record<string, unknown>;
+  if (typeof orgAny.getDelegation === "function" && typeof orgAny.setDelegation === "function") {
+    let existingDelegation: { grants?: Record<string, unknown>[] } = { grants: [] };
+    try {
+      existingDelegation = await (orgAny.getDelegation as (input: unknown) => Promise<{ grants?: Record<string, unknown>[] }>)({
+        orgDid,
+        contractId,
+      });
+    } catch (err) {
+      fail(`could not read the existing delegation record: ${err instanceof Error ? err.message : String(err)}`);
+      info("Refusing to continue: setDelegation replaces the whole document, so writing");
+      info("without knowing what is already there would revoke every other grantee.");
+      process.exit(1);
+    }
+    const preserved = (existingDelegation.grants ?? []).filter(
+      (g) => ((g.grantee ?? g.user_did) as string | undefined)?.toLowerCase() !== agentDid.toLowerCase(),
+    );
+    for (const g of preserved) info(`preserved grant: ${(g.grantee ?? g.user_did) as string}`);
+
+    // Per-function keying: one grant row per required function with WireScope ({ path, access }) records
+    const perFunctionGrants = READ_FUNCTIONS.map((fn) => ({
+      grantee: agentDid,
+      function: fn,
+      scopes: readOnlyScopes(GRANTED_SCOPES),
+    }));
+
+    await (orgAny.setDelegation as (input: unknown) => Promise<unknown>)({
+      orgDid,
+      contractId,
+      grants: [...preserved, ...perFunctionGrants],
+    });
+  } else {
+    let existingGrants: UserGrant[];
+    try {
+      existingGrants = (await org.grantsGet({ orgDid, contractId })).grants;
+    } catch (err) {
+      fail(`could not read the existing grant record: ${err instanceof Error ? err.message : String(err)}`);
+      info("Refusing to continue: `setGrants` replaces the whole document, so writing");
+      info("without knowing what is already there would revoke every other grantee.");
+      process.exit(1);
+    }
+    const preservedGrants = existingGrants.filter(
+      (g) => g.user_did.toLowerCase() !== agentDid.toLowerCase(),
+    );
+    for (const g of preservedGrants) info(`preserved grant: ${g.user_did}`);
+    await org.setGrants({
+      orgDid,
+      contractId,
+      grants: [
+        ...preservedGrants,
+        { user_did: agentDid, functions: READ_FUNCTIONS, scopes: GRANTED_SCOPES },
+      ],
+    });
   }
-  const preservedGrants = existingGrants.filter(
-    (g) => g.user_did.toLowerCase() !== agentDid.toLowerCase(),
-  );
-  for (const g of preservedGrants) info(`preserved grant: ${g.user_did}`);
-  await org.setGrants({
-    orgDid,
-    contractId,
-    grants: [
-      ...preservedGrants,
-      { user_did: agentDid, functions: READ_FUNCTIONS, scopes: GRANTED_SCOPES },
-    ],
-  });
-  ok(`agent granted ${GRANTED_SCOPES.length} scopes`);
+  ok(`agent granted ${GRANTED_SCOPES.length} scopes (per-function keying)`);
   info(`granted:     ${GRANTED_SCOPES.join(", ")}`);
   info(`NOT granted: compliance/training, compliance/background`);
   info("that omission is deliberate — it is what makes a live REVIEW_REQUIRED demonstrable");
@@ -301,6 +332,7 @@ async function main(): Promise<void> {
   // every other agent the data owner has authorised. `mergeAgentAuthEntries`
   // leaves other agents (and other scripts on this agent) untouched and replaces
   // only the row for this contract.
+  // Note: readScopes is omitted as the platform has retired the legacy roster split.
   const ourEntry: AgentAuthEntry = {
     agentDid,
     scripts: [
@@ -309,7 +341,6 @@ async function main(): Promise<void> {
         versionReq: null,
         functions: READ_FUNCTIONS,
         scopes: GRANTED_SCOPES,
-        readScopes: GRANTED_SCOPES,
         allowedHosts: [],
       },
     ],
